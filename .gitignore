@@ -1,5 +1,7 @@
-# OSX
+# OSX/macOS
 .DS_Store
+.AppleDouble
+.LSOverride
 
 # Xcode
 build/
@@ -31,12 +33,12 @@ local.properties
 *.keystore
 !debug.keystore
 
-# node.js
+# Node.js
 node_modules/
 npm-debug.log
 yarn-error.log
 
-# fastlane
+# Fastlane
 **/fastlane/report.xml
 **/fastlane/Preview.html
 **/fastlane/screenshots
@@ -47,14 +49,30 @@ yarn-error.log
 
 # Expo
 .expo/
+.expo-shared/
 dist/
 web-build/
-.expo-shared/
+
+# EAS Build
+.eas/
+eas-build-*.json
+
+# React Native / Mobile certificates & keys
+*.jks
+*.p8
+*.p12
+*.key
+*.pem
+*.mobileprovision
+*.orig.*
 
 # Environment variables
 .env
 .env.local
 .env.*.local
+.env.development.local
+.env.test.local
+.env.production.local
 
 # TypeScript
 *.tsbuildinfo
@@ -63,6 +81,12 @@ web-build/
 firebase-debug.log
 firestore-debug.log
 ui-debug.log
+.firebase/
+firebase-export-*.json
+
+# Metro bundler
+.metro-health-check*
+.cache/
 
 # ML Models
 *.h5
@@ -70,5 +94,41 @@ ui-debug.log
 *.tflite
 models/
 
-# Setup
-SETUP.md
+# Testing
+coverage/
+.nyc_output/
+
+# IDE - VSCode
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.history/*
+
+# IDE - Other
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+pnpm-debug.log*
+
+# Temporary files
+*.tmp
+*.temp
+
+# Package manager lock files (optional - uncomment if you don't want to commit)
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
+
+# Note: SETUP.md is NOT ignored - it's useful documentation
+# If you have sensitive setup info, create SETUP_PRIVATE.md and add it here
