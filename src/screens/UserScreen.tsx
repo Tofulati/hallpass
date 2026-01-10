@@ -7,11 +7,14 @@ import {
   TouchableOpacity,
   Image,
   Share,
+  ActivityIndicator,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Image as ExpoImage } from 'expo-image';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { DatabaseService } from '../services/databaseService';
-import { User, University } from '../types';
+import { User, University, Course, Organization } from '../types';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 
@@ -19,17 +22,84 @@ export default function UserScreen({ navigation }: any) {
   const { user, userData, refreshUserData } = useAuth();
   const { theme } = useTheme();
   const [university, setUniversity] = useState<University | null>(null);
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [organizations, setOrganizations] = useState<Organization[]>([]);
+  const [loadingCourses, setLoadingCourses] = useState(false);
+  const [loadingOrgs, setLoadingOrgs] = useState(false);
 
   useEffect(() => {
-    loadUniversity();
+    if (userData) {
+      loadUniversity();
+      loadUserCourses();
+      loadUserOrganizations();
+    }
   }, [userData]);
 
   const loadUniversity = async () => {
-    // TODO: Load university data from database
-    // For now, using mock data
-    if (userData?.university) {
-      // const uni = await DatabaseService.getUniversity(userData.university);
-      // setUniversity(uni);
+    if (userData?.university && typeof userData.university === 'string') {
+      try {
+        const uni = await DatabaseService.getUniversity(userData.university);
+        if (uni) {
+          setUniversity(uni);
+        }
+      } catch (error) {
+        console.error('Error loading university:', error);
+      }
+    }
+  };
+
+  const loadUserCourses = async () => {
+    if (!userData?.courses || !Array.isArray(userData.courses) || userData.courses.length === 0) {
+      setCourses([]);
+      return;
+    }
+
+    if (!userData?.university || typeof userData.university !== 'string') {
+      setCourses([]);
+      return;
+    }
+
+    setLoadingCourses(true);
+    try {
+      // Get all courses for the user's university
+      const allCourses = await DatabaseService.getCourses(userData.university);
+      // In Firestore, courses is stored as string[] (IDs), not Course[]
+      const courseIds = userData.courses.map((c: any) => typeof c === 'string' ? c : c.id);
+      // Filter to only courses the user is enrolled in
+      const userCourses = allCourses.filter(course => 
+        courseIds.includes(course.id)
+      );
+      setCourses(userCourses);
+    } catch (error) {
+      console.error('Error loading courses:', error);
+      setCourses([]);
+    } finally {
+      setLoadingCourses(false);
+    }
+  };
+
+  const loadUserOrganizations = async () => {
+    if (!userData?.clubs || !Array.isArray(userData.clubs) || userData.clubs.length === 0) {
+      setOrganizations([]);
+      return;
+    }
+
+    setLoadingOrgs(true);
+    try {
+      // Get all organizations
+      const allOrganizations = await DatabaseService.getOrganizations();
+      // In Firestore, clubs is stored as string[] (IDs), not Club[]
+      const clubIds = userData.clubs.map((c: any) => typeof c === 'string' ? c : c.id);
+      // Filter to only organizations the user is a member of
+      const userOrgs = allOrganizations.filter(org => 
+        clubIds.includes(org.id)
+      );
+      setOrganizations(userOrgs);
+    } catch (error) {
+      console.error('Error loading organizations:', error);
+      setOrganizations([]);
+    } finally {
+      setLoadingOrgs(false);
     }
   };
 
@@ -56,17 +126,18 @@ export default function UserScreen({ navigation }: any) {
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
-      {/* Header with Settings Button */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Profile</Text>
-        <TouchableOpacity
-          onPress={() => navigation.navigate('Settings')}
-          style={styles.settingsButton}
-        >
-          <Ionicons name="settings-outline" size={24} color={theme.colors.text} />
-        </TouchableOpacity>
-      </View>
+    <SafeAreaView style={styles.container} edges={['top']}>
+      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+        {/* Header with Settings Button */}
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Profile</Text>
+          <TouchableOpacity
+            onPress={() => navigation.navigate('Settings')}
+            style={styles.settingsButton}
+          >
+            <Ionicons name="settings-outline" size={24} color={theme.colors.text} />
+          </TouchableOpacity>
+        </View>
 
       {/* ID Card */}
       <View style={styles.idCardContainer}>
@@ -78,8 +149,16 @@ export default function UserScreen({ navigation }: any) {
         >
           {/* University Logo Area */}
           <View style={styles.idCardHeader}>
-            {university?.logo && (
-              <Image source={{ uri: university.logo }} style={styles.universityLogo} />
+            {university?.logo && university.logo.trim() ? (
+              <Image
+                source={{ uri: university.logo }}
+                style={styles.universityLogo}
+                resizeMode="contain"
+              />
+            ) : (
+              <View style={styles.universityLogoPlaceholder}>
+                <Ionicons name="school-outline" size={30} color="#FFFFFF" />
+              </View>
             )}
             <Text style={styles.universityName}>
               {university?.name || 'University'}
@@ -124,18 +203,42 @@ export default function UserScreen({ navigation }: any) {
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Courses</Text>
-          <Text style={styles.sectionCount}>{userData.courses?.length || 0}</Text>
+          <Text style={styles.sectionCount}>{courses.length || 0}</Text>
         </View>
-        {userData.courses && userData.courses.length > 0 ? (
-          <View style={styles.coursesList}>
-            {userData.courses.slice(0, 5).map((courseId, index) => (
-              <View key={index} style={styles.courseTag}>
-                <Text style={styles.courseTagText}>Course {index + 1}</Text>
-              </View>
+        {loadingCourses ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="small" color={theme.colors.primary} />
+            <Text style={styles.loadingText}>Loading courses...</Text>
+          </View>
+        ) : courses.length > 0 ? (
+          <View style={styles.listContainer}>
+            {courses.map((course) => (
+              <TouchableOpacity
+                key={course.id}
+                style={styles.listItem}
+                onPress={() => {
+                  if (navigation) {
+                    navigation.navigate('Course', {
+                      screen: 'CourseDetail',
+                      params: { courseId: course.id },
+                    });
+                  }
+                }}
+              >
+                <View style={styles.listItemContent}>
+                  <View style={styles.courseIconContainer}>
+                    <Ionicons name="book" size={20} color={theme.colors.primary} />
+                  </View>
+                  <View style={styles.listItemText}>
+                    <Text style={styles.listItemTitle}>{course.code}</Text>
+                    <Text style={styles.listItemSubtitle} numberOfLines={1}>
+                      {course.name}
+                    </Text>
+                  </View>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color={theme.colors.textSecondary} />
+              </TouchableOpacity>
             ))}
-            {userData.courses.length > 5 && (
-              <Text style={styles.moreText}>+{userData.courses.length - 5} more</Text>
-            )}
           </View>
         ) : (
           <Text style={styles.emptyText}>No courses yet</Text>
@@ -146,18 +249,50 @@ export default function UserScreen({ navigation }: any) {
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Clubs & Organizations</Text>
-          <Text style={styles.sectionCount}>{userData.clubs?.length || 0}</Text>
+          <Text style={styles.sectionCount}>{organizations.length || 0}</Text>
         </View>
-        {userData.clubs && userData.clubs.length > 0 ? (
-          <View style={styles.clubsList}>
-            {userData.clubs.slice(0, 5).map((clubId, index) => (
-              <View key={index} style={styles.clubTag}>
-                <Text style={styles.clubTagText}>Club {index + 1}</Text>
-              </View>
+        {loadingOrgs ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="small" color={theme.colors.primary} />
+            <Text style={styles.loadingText}>Loading organizations...</Text>
+          </View>
+        ) : organizations.length > 0 ? (
+          <View style={styles.listContainer}>
+            {organizations.map((org) => (
+              <TouchableOpacity
+                key={org.id}
+                style={styles.listItem}
+                onPress={() => {
+                  if (navigation) {
+                    navigation.navigate('Clubs', {
+                      screen: 'ClubDetail',
+                      params: { clubId: org.id },
+                    });
+                  }
+                }}
+              >
+                <View style={styles.listItemContent}>
+                  {org.logo && org.logo.trim() ? (
+                    <ExpoImage
+                      source={{ uri: org.logo }}
+                      style={styles.orgLogo}
+                      contentFit="cover"
+                    />
+                  ) : (
+                    <View style={styles.orgLogoPlaceholder}>
+                      <Ionicons name="people" size={20} color={theme.colors.textSecondary} />
+                    </View>
+                  )}
+                  <View style={styles.listItemText}>
+                    <Text style={styles.listItemTitle}>{org.name}</Text>
+                    <Text style={styles.listItemSubtitle} numberOfLines={1}>
+                      {org.members?.length || 0} {org.members?.length === 1 ? 'member' : 'members'}
+                    </Text>
+                  </View>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color={theme.colors.textSecondary} />
+              </TouchableOpacity>
             ))}
-            {userData.clubs.length > 5 && (
-              <Text style={styles.moreText}>+{userData.clubs.length - 5} more</Text>
-            )}
           </View>
         ) : (
           <Text style={styles.emptyText}>No clubs yet</Text>
@@ -169,7 +304,8 @@ export default function UserScreen({ navigation }: any) {
         <Ionicons name="share-outline" size={20} color={theme.colors.primary} />
         <Text style={styles.shareButtonText}>Share Profile</Text>
       </TouchableOpacity>
-    </ScrollView>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
@@ -179,8 +315,12 @@ const createStyles = (theme: any, university: University | null) =>
       flex: 1,
       backgroundColor: theme.colors.background,
     },
+    scrollView: {
+      flex: 1,
+    },
     scrollContent: {
       padding: 16,
+      paddingBottom: 100, // Extra padding at bottom to prevent content from being hidden behind tabs
     },
     header: {
       flexDirection: 'row',
@@ -220,6 +360,17 @@ const createStyles = (theme: any, university: University | null) =>
       marginBottom: 8,
       borderRadius: 30,
       backgroundColor: '#FFFFFF',
+      overflow: 'hidden',
+      padding: 8,
+    },
+    universityLogoPlaceholder: {
+      width: 60,
+      height: 60,
+      marginBottom: 8,
+      borderRadius: 30,
+      backgroundColor: '#FFFFFF40',
+      alignItems: 'center',
+      justifyContent: 'center',
     },
     universityName: {
       fontSize: 18,
@@ -303,46 +454,70 @@ const createStyles = (theme: any, university: University | null) =>
       fontSize: 16,
       color: theme.colors.textSecondary,
     },
-    coursesList: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 8,
+    listContainer: {
+      backgroundColor: theme.colors.surface,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      overflow: 'hidden',
     },
-    courseTag: {
+    listItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      padding: 16,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.colors.border,
+    },
+    listItemContent: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flex: 1,
+    },
+    courseIconContainer: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
       backgroundColor: theme.colors.primary + '20',
-      paddingHorizontal: 12,
-      paddingVertical: 6,
-      borderRadius: 16,
-      marginRight: 8,
-      marginBottom: 8,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: 12,
     },
-    courseTagText: {
-      fontSize: 14,
-      color: theme.colors.primary,
-      fontWeight: '500',
+    orgLogo: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      marginRight: 12,
+      backgroundColor: theme.colors.border,
     },
-    clubsList: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 8,
+    orgLogoPlaceholder: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      backgroundColor: theme.colors.border + '40',
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: 12,
     },
-    clubTag: {
-      backgroundColor: theme.colors.secondary + '20',
-      paddingHorizontal: 12,
-      paddingVertical: 6,
-      borderRadius: 16,
-      marginRight: 8,
-      marginBottom: 8,
+    listItemText: {
+      flex: 1,
     },
-    clubTagText: {
-      fontSize: 14,
-      color: theme.colors.secondary,
-      fontWeight: '500',
+    listItemTitle: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.colors.text,
+      marginBottom: 4,
     },
-    moreText: {
+    listItemSubtitle: {
       fontSize: 14,
       color: theme.colors.textSecondary,
-      alignSelf: 'center',
+    },
+    loadingContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: 20,
+      gap: 8,
     },
     emptyText: {
       fontSize: 14,

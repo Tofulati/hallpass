@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
@@ -18,7 +18,7 @@ export default function DiscussionCard({ discussion, navigation }: DiscussionCar
   const [upvoted, setUpvoted] = useState(false);
   const [downvoted, setDownvoted] = useState(false);
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (user) {
       setUpvoted(discussion.upvotes.includes(user.uid));
       setDownvoted(discussion.downvotes.includes(user.uid));

@@ -14,10 +14,12 @@ import {
   ScrollView,
 } from 'react-native';
 import { Image } from 'expo-image';
+import * as ImagePicker from 'expo-image-picker';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { AuthService } from '../services/authService';
 import { DatabaseService } from '../services/databaseService';
+import { VerificationService } from '../services/verificationService';
 import { University, Course, Club, Organization } from '../types';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -29,6 +31,15 @@ export default function OnboardingScreen({ navigation }: any) {
   const [selectedCourses, setSelectedCourses] = useState<string[]>([]);
   const [selectedClubs, setSelectedClubs] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+  
+  // ID Verification state (image is just for visual verification, not stored)
+  const [idCardImageUri, setIdCardImageUri] = useState<string | null>(null);
+  const [nameOnCard, setNameOnCard] = useState('');
+  const [universityNameOnCard, setUniversityNameOnCard] = useState('');
+  const [verifying, setVerifying] = useState(false);
+  const [verificationError, setVerificationError] = useState<string | null>(null);
+  const [nameMatchResult, setNameMatchResult] = useState<boolean | null>(null);
+  const [universityMatchResult, setUniversityMatchResult] = useState<boolean | null>(null);
   
   // University state
   const [universities, setUniversities] = useState<University[]>([]);
@@ -135,16 +146,16 @@ export default function OnboardingScreen({ navigation }: any) {
     }
   }, [searchQuery, universities]);
 
-  // Load courses when university is selected and step is 2
+  // Load courses when university is selected and step is 3 (after verification)
   useEffect(() => {
-    if (selectedUniversity && step === 2) {
+    if (selectedUniversity && step === 3) {
       loadCourses();
     }
   }, [selectedUniversity, step]);
 
-  // Load organizations when step is 3
+  // Load organizations when step is 4
   useEffect(() => {
-    if (step === 3) {
+    if (step === 4) {
       loadOrganizations();
     }
   }, [step]);
@@ -198,13 +209,19 @@ export default function OnboardingScreen({ navigation }: any) {
   const loadOrganizations = async () => {
     try {
       setLoadingOrganizations(true);
-      const loadedOrganizations = await DatabaseService.getOrganizations();
-      // Sort alphabetically by name
-      const sorted = loadedOrganizations.sort((a, b) => 
-        a.name.toLowerCase().localeCompare(b.name.toLowerCase())
-      );
-      setOrganizations(sorted);
-      setFilteredOrganizations(sorted);
+      // Only load organizations for the selected university
+      if (selectedUniversity) {
+        const loadedOrganizations = await DatabaseService.getOrganizations(selectedUniversity.id);
+        // Sort alphabetically by name
+        const sorted = loadedOrganizations.sort((a, b) => 
+          a.name.toLowerCase().localeCompare(b.name.toLowerCase())
+        );
+        setOrganizations(sorted);
+        setFilteredOrganizations(sorted);
+      } else {
+        setOrganizations([]);
+        setFilteredOrganizations([]);
+      }
     } catch (error) {
       console.error('Error loading organizations:', error);
       Alert.alert('Error', 'Failed to load organizations');
@@ -443,11 +460,17 @@ export default function OnboardingScreen({ navigation }: any) {
 
     setSubmittingOrganization(true);
     try {
+      if (!selectedUniversity) {
+        Alert.alert('Error', 'Please select a university first');
+        return;
+      }
+
       await DatabaseService.requestOrganization(
         {
           name: organizationFormData.name.trim(),
           logo: organizationFormData.logo.trim() || '',
           description: organizationFormData.description.trim(),
+          universityId: selectedUniversity.id,
           colors: {
             primary: organizationFormData.primaryColor,
             secondary: organizationFormData.secondaryColor,
@@ -479,6 +502,156 @@ export default function OnboardingScreen({ navigation }: any) {
       Alert.alert('Error', error.message || 'Failed to submit organization request');
     } finally {
       setSubmittingOrganization(false);
+    }
+  };
+
+  // ID Verification handlers
+  const handleCaptureIDCard = async () => {
+    try {
+      // Request camera permissions
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert(
+          'Permission Required',
+          'Camera permission is required to capture your ID card. Please enable it in your device settings.'
+        );
+        return;
+      }
+
+      // Launch camera
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 0.9,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        setIdCardImageUri(result.assets[0].uri);
+        setVerificationError(null);
+      }
+    } catch (error: any) {
+      console.error('Error capturing ID card:', error);
+      Alert.alert('Error', 'Failed to capture ID card image');
+    }
+  };
+
+  const handlePickIDCard = async () => {
+    try {
+      // Request media library permissions
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert(
+          'Permission Required',
+          'Photo library permission is required to select your ID card. Please enable it in your device settings.'
+        );
+        return;
+      }
+
+      // Launch image picker
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 0.9,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        setIdCardImageUri(result.assets[0].uri);
+        setVerificationError(null);
+      }
+    } catch (error: any) {
+      console.error('Error picking ID card:', error);
+      Alert.alert('Error', 'Failed to pick ID card image');
+    }
+  };
+
+  const handleVerifyID = async () => {
+    if (!idCardImageUri || !user || !selectedUniversity) {
+      Alert.alert('Error', 'Please capture or select an ID card image for visual verification');
+      return;
+    }
+
+    if (!nameOnCard.trim()) {
+      Alert.alert('Error', 'Please enter the name as it appears on your ID card');
+      return;
+    }
+
+    setVerifying(true);
+    setVerificationError(null);
+    setNameMatchResult(null);
+    setUniversityMatchResult(null);
+
+    try {
+      // Get user's name from Firestore
+      const userData = await DatabaseService.getUser(user.uid);
+      const userName = userData?.name || user.displayName || '';
+
+      if (!userName) {
+        throw new Error('User name not found. Please ensure your name is set in your profile.');
+      }
+
+      // Verify name match
+      const nameMatch = VerificationService.verifyNameMatch(userName, nameOnCard.trim());
+      setNameMatchResult(nameMatch);
+
+      // Verify university match (optional)
+      let universityMatch = false;
+      if (universityNameOnCard.trim() && selectedUniversity) {
+        universityMatch = VerificationService.verifyUniversityMatch(selectedUniversity, universityNameOnCard.trim());
+        setUniversityMatchResult(universityMatch);
+      }
+
+      // Check for duplicate accounts before submitting
+      const duplicateCheck = await VerificationService.checkForDuplicateAccount(
+        nameOnCard.trim(),
+        selectedUniversity.id,
+        user.uid
+      );
+
+      if (duplicateCheck.isDuplicate) {
+        throw new Error('An account with this ID card name already exists for this university. Please use your existing account or contact support if you believe this is an error.');
+      }
+
+      // Submit verification (without storing the actual image - just metadata)
+      await VerificationService.submitIDVerification(
+        user.uid,
+        selectedUniversity.id,
+        nameOnCard.trim(),
+        universityNameOnCard.trim() || undefined,
+        nameMatch,
+        universityMatch
+      );
+
+      if (nameMatch && (universityMatch || !universityNameOnCard.trim())) {
+        Alert.alert(
+          'Verification Successful',
+          'Your ID card has been verified. You can proceed to select your courses.',
+          [
+            {
+              text: 'Continue',
+              onPress: () => setStep(3), // Proceed to course selection
+            },
+          ]
+        );
+      } else {
+        Alert.alert(
+          'Verification Submitted',
+          'Your verification has been submitted for manual review. You can still proceed, but verification is pending.',
+          [
+            {
+              text: 'Continue',
+              onPress: () => setStep(3), // Proceed to course selection anyway
+            },
+          ]
+        );
+      }
+    } catch (error: any) {
+      console.error('Error verifying ID:', error);
+      setVerificationError(error.message || 'Failed to verify ID card');
+      Alert.alert('Error', error.message || 'Failed to verify ID card');
+    } finally {
+      setVerifying(false);
     }
   };
 
@@ -625,7 +798,11 @@ export default function OnboardingScreen({ navigation }: any) {
 
         <TouchableOpacity
           style={[styles.button, !selectedUniversity && styles.buttonDisabled]}
-          onPress={() => selectedUniversity && setStep(2)}
+          onPress={() => {
+            if (selectedUniversity) {
+              setStep(2); // Go to verification step after university selection
+            }
+          }}
           disabled={!selectedUniversity}
         >
           <Text style={styles.buttonText}>Next</Text>
@@ -634,7 +811,220 @@ export default function OnboardingScreen({ navigation }: any) {
     </View>
   );
 
-  // Render step 2: Course Selection
+  // Render step 2: ID Verification
+  const renderVerificationStep = () => (
+    <View style={styles.stepContainer}>
+      <View style={styles.headerSection}>
+        <Text style={styles.stepTitle}>Verify Your Student ID</Text>
+        <Text style={styles.stepDescription}>
+          Please take a photo of the front of your school ID card. We'll verify that the name matches your registered name to ensure you're a real student and prevent duplicate accounts. The image will not be stored.
+        </Text>
+      </View>
+
+      <ScrollView
+        style={styles.optionsScrollView}
+        contentContainerStyle={styles.verificationContent}
+        showsVerticalScrollIndicator={true}
+        bounces={true}
+      >
+        {/* ID Card Image Preview */}
+        {idCardImageUri ? (
+          <View style={styles.idCardPreview}>
+            <Image
+              source={{ uri: idCardImageUri }}
+              style={styles.idCardImage}
+              contentFit="cover"
+            />
+            <TouchableOpacity
+              style={styles.removeImageButton}
+              onPress={() => {
+                setIdCardImageUri(null);
+                setNameOnCard('');
+                setUniversityNameOnCard('');
+                setVerificationError(null);
+                setNameMatchResult(null);
+                setUniversityMatchResult(null);
+              }}
+            >
+              <Ionicons name="close-circle" size={24} color={theme.colors.error} />
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={styles.idCardPlaceholder}>
+            <Ionicons name="id-card-outline" size={64} color={theme.colors.textSecondary} />
+            <Text style={styles.placeholderText}>ID Card Image</Text>
+            <Text style={styles.placeholderSubtext}>
+              Capture or select the front of your school ID card
+            </Text>
+          </View>
+        )}
+
+        {/* Capture Buttons */}
+        {!idCardImageUri && (
+          <View style={styles.captureButtons}>
+            <TouchableOpacity
+              style={styles.captureButton}
+              onPress={handleCaptureIDCard}
+            >
+              <Ionicons name="camera" size={24} color={theme.colors.primary} />
+              <Text style={styles.captureButtonText}>Take Photo</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.captureButton, styles.pickButton]}
+              onPress={handlePickIDCard}
+            >
+              <Ionicons name="images-outline" size={24} color={theme.colors.primary} />
+              <Text style={styles.captureButtonText}>Choose from Library</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Name Input */}
+        {idCardImageUri && (
+          <View style={styles.verificationForm}>
+            <View style={styles.formGroup}>
+              <Text style={styles.formLabel}>
+                Name on ID Card * (Must match your registered name)
+              </Text>
+              <Text style={styles.formSubLabel}>
+                Your registered name: {user?.displayName || 'N/A'}
+              </Text>
+              <TextInput
+                style={styles.formInput}
+                placeholder="Enter name exactly as it appears on your ID card"
+                placeholderTextColor={theme.colors.textSecondary}
+                value={nameOnCard}
+                onChangeText={(text) => {
+                  setNameOnCard(text);
+                  setVerificationError(null);
+                  setNameMatchResult(null);
+                  // Auto-verify name match as user types
+                  if (text.trim() && user?.displayName) {
+                    DatabaseService.getUser(user.uid).then(userData => {
+                      const userName = userData?.name || user.displayName || '';
+                      if (userName) {
+                        const matches = VerificationService.verifyNameMatch(userName, text.trim());
+                        setNameMatchResult(matches);
+                        if (!matches && text.trim().length > 0) {
+                          setVerificationError(`Name does not match. Please ensure the name matches exactly with your registered name (${userName}).`);
+                        } else if (matches) {
+                          setVerificationError(null);
+                        }
+                      }
+                    }).catch(() => {
+                      setNameMatchResult(null);
+                    });
+                  }
+                }}
+                autoCapitalize="words"
+              />
+            </View>
+
+            <View style={styles.formGroup}>
+              <Text style={styles.formLabel}>
+                University Name on ID Card (Optional)
+              </Text>
+              <TextInput
+                style={styles.formInput}
+                placeholder="Enter university name as it appears on your ID card"
+                placeholderTextColor={theme.colors.textSecondary}
+                value={universityNameOnCard}
+                onChangeText={(text) => {
+                  setUniversityNameOnCard(text);
+                  setVerificationError(null);
+                  setUniversityMatchResult(null);
+                  // Auto-verify university match as user types
+                  if (text.trim() && selectedUniversity) {
+                    const matches = VerificationService.verifyUniversityMatch(selectedUniversity, text.trim());
+                    setUniversityMatchResult(matches);
+                    if (!matches && text.trim().length > 0 && !verificationError) {
+                      setVerificationError(`University name does not match selected university (${selectedUniversity.name}).`);
+                    } else if (matches) {
+                      // Clear university-related errors if match is found
+                      if (verificationError?.includes('University')) {
+                        setVerificationError(null);
+                      }
+                    }
+                  }
+                }}
+                autoCapitalize="words"
+              />
+            </View>
+
+            {/* Verification Results */}
+            {nameMatchResult !== null && (
+              <View style={[
+                styles.verificationResult,
+                nameMatchResult ? styles.verificationSuccess : styles.verificationFailure
+              ]}>
+                <Ionicons 
+                  name={nameMatchResult ? "checkmark-circle" : "close-circle"} 
+                  size={20} 
+                  color={nameMatchResult ? theme.colors.success : theme.colors.error} 
+                />
+                <Text style={[
+                  styles.verificationResultText,
+                  nameMatchResult ? styles.verificationSuccessText : styles.verificationFailureText
+                ]}>
+                  {nameMatchResult ? 'Name matches ✓' : 'Name does not match ✗'}
+                </Text>
+              </View>
+            )}
+
+            {universityMatchResult !== null && universityNameOnCard.trim() && (
+              <View style={[
+                styles.verificationResult,
+                universityMatchResult ? styles.verificationSuccess : styles.verificationFailure
+              ]}>
+                <Ionicons 
+                  name={universityMatchResult ? "checkmark-circle" : "close-circle"} 
+                  size={20} 
+                  color={universityMatchResult ? theme.colors.success : theme.colors.error} 
+                />
+                <Text style={[
+                  styles.verificationResultText,
+                  universityMatchResult ? styles.verificationSuccessText : styles.verificationFailureText
+                ]}>
+                  {universityMatchResult ? 'University matches ✓' : 'University does not match ✗'}
+                </Text>
+              </View>
+            )}
+
+            {verificationError && (
+              <View style={styles.errorContainer}>
+                <Ionicons name="alert-circle" size={20} color={theme.colors.error} />
+                <Text style={styles.errorText}>{verificationError}</Text>
+              </View>
+            )}
+          </View>
+        )}
+      </ScrollView>
+
+      {/* Buttons at bottom - inline layout */}
+      <View style={styles.buttonSection}>
+        <View style={styles.buttonSectionInline}>
+          <TouchableOpacity
+            style={styles.secondaryButton}
+            onPress={() => setStep(1)}
+          >
+            <Text style={styles.secondaryButtonText}>Back</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.button, styles.buttonNext, (!idCardImageUri || !nameOnCard.trim() || verifying) && styles.buttonDisabled]}
+            onPress={handleVerifyID}
+            disabled={!idCardImageUri || !nameOnCard.trim() || verifying}
+          >
+            <Text style={styles.buttonText}>
+              {verifying ? 'Verifying...' : 'Verify & Continue'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </View>
+  );
+
+  // Render step 3: Course Selection
   const renderCourseStep = () => (
     <View style={styles.stepContainer}>
       {/* Header with search bar */}
@@ -748,7 +1138,7 @@ export default function OnboardingScreen({ navigation }: any) {
         <View style={styles.buttonSectionInlineNested}>
           <TouchableOpacity
             style={styles.secondaryButton}
-            onPress={() => setStep(1)}
+            onPress={() => setStep(2)}
           >
             <Text style={styles.secondaryButtonText}>Back</Text>
           </TouchableOpacity>
@@ -759,7 +1149,7 @@ export default function OnboardingScreen({ navigation }: any) {
                 Alert.alert('Error', 'Please select at least one course to continue');
                 return;
               }
-              setStep(3);
+              setStep(4);
             }}
             disabled={selectedCourses.length === 0}
           >
@@ -919,13 +1309,13 @@ export default function OnboardingScreen({ navigation }: any) {
         <View style={styles.buttonSectionInlineNested}>
           <TouchableOpacity
             style={styles.secondaryButton}
-            onPress={() => setStep(2)}
+            onPress={() => setStep(3)}
           >
             <Text style={styles.secondaryButtonText}>Back</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.button, styles.buttonNext]}
-            onPress={() => setStep(4)}
+            onPress={() => setStep(5)}
           >
             <Text style={styles.buttonText}>Next</Text>
           </TouchableOpacity>
@@ -943,11 +1333,13 @@ export default function OnboardingScreen({ navigation }: any) {
         <View style={styles.content}>
           {step === 1 && renderUniversityStep()}
 
-          {step === 2 && renderCourseStep()}
+          {step === 2 && renderVerificationStep()}
 
-          {step === 3 && renderOrganizationsStep()}
+          {step === 3 && renderCourseStep()}
 
-          {step === 4 && (
+          {step === 4 && renderOrganizationsStep()}
+
+          {step === 5 && (
             <View style={styles.stepContainer}>
               <Text style={styles.stepTitle}>You're All Set!</Text>
               <Text style={styles.stepDescription}>
@@ -1877,5 +2269,126 @@ const createStyles = (theme: any) =>
     },
     removeProfessorButton: {
       padding: 2,
+    },
+    // Verification Step Styles
+    verificationContent: {
+      flexGrow: 1,
+      paddingBottom: 20,
+    },
+    idCardPreview: {
+      position: 'relative',
+      width: '100%',
+      marginBottom: 20,
+      borderRadius: 12,
+      overflow: 'hidden',
+      borderWidth: 2,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.surface,
+    },
+    idCardImage: {
+      width: '100%',
+      height: 300,
+      backgroundColor: theme.colors.border,
+    },
+    removeImageButton: {
+      position: 'absolute',
+      top: 12,
+      right: 12,
+      backgroundColor: theme.colors.surface,
+      borderRadius: 16,
+      padding: 4,
+      zIndex: 10,
+    },
+    idCardPlaceholder: {
+      width: '100%',
+      height: 300,
+      borderRadius: 12,
+      backgroundColor: theme.colors.surface,
+      borderWidth: 2,
+      borderColor: theme.colors.border,
+      borderStyle: 'dashed',
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: 20,
+    },
+    placeholderSubtext: {
+      fontSize: 12,
+      color: theme.colors.textSecondary,
+      marginTop: 8,
+      textAlign: 'center',
+      paddingHorizontal: 20,
+    },
+    captureButtons: {
+      flexDirection: 'row',
+      gap: 12,
+      marginBottom: 20,
+    },
+    captureButton: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.colors.surface,
+      borderRadius: 12,
+      padding: 16,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      gap: 8,
+    },
+    pickButton: {
+      borderStyle: 'dashed',
+    },
+    captureButtonText: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: theme.colors.primary,
+    },
+    verificationForm: {
+      width: '100%',
+    },
+    verificationResult: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      padding: 12,
+      borderRadius: 8,
+      marginBottom: 12,
+      gap: 8,
+    },
+    verificationSuccess: {
+      backgroundColor: theme.colors.success + '20',
+      borderWidth: 1,
+      borderColor: theme.colors.success,
+    },
+    verificationFailure: {
+      backgroundColor: theme.colors.error + '20',
+      borderWidth: 1,
+      borderColor: theme.colors.error,
+    },
+    verificationResultText: {
+      fontSize: 13,
+      fontWeight: '600',
+    },
+    verificationSuccessText: {
+      color: theme.colors.success,
+    },
+    verificationFailureText: {
+      color: theme.colors.error,
+    },
+    errorContainer: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      backgroundColor: theme.colors.error + '20',
+      borderRadius: 8,
+      padding: 12,
+      marginBottom: 12,
+      borderWidth: 1,
+      borderColor: theme.colors.error,
+      gap: 8,
+    },
+    errorText: {
+      flex: 1,
+      fontSize: 13,
+      color: theme.colors.error,
+      lineHeight: 18,
     },
   });

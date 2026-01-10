@@ -15,7 +15,8 @@ import { ImageService, ImageUploadResult } from '../services/imageService';
 import ImagePickerButton from '../components/ImagePickerButton';
 import { Ionicons } from '@expo/vector-icons';
 
-export default function CreateDiscussionScreen({ navigation }: any) {
+export default function CreateDiscussionScreen({ route, navigation }: any) {
+  const { courseId, organizationId, isPrivate } = route.params || {};
   const { user, userData } = useAuth();
   const { theme } = useTheme();
   const [title, setTitle] = useState('');
@@ -55,6 +56,9 @@ export default function CreateDiscussionScreen({ navigation }: any) {
         content: content.trim(),
         tags,
         images: images.length > 0 ? images : undefined,
+        courseId: courseId || undefined,
+        organizationId: organizationId || undefined,
+        isPrivate: isPrivate === true,
         upvotes: [],
         downvotes: [],
         comments: [],

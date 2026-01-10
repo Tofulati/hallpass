@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   TextInput,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { DatabaseService } from '../services/databaseService';
@@ -32,8 +33,15 @@ export default function CourseScreen({ navigation }: any) {
   const loadCourses = async () => {
     if (!userData?.university) return;
     
+    // In Firestore, university is stored as string (ID), but TypeScript types it as University
+    const universityId = typeof userData.university === 'string' 
+      ? userData.university 
+      : userData.university.id;
+    
+    if (!universityId) return;
+    
     try {
-      const allCourses = await DatabaseService.getCourses(userData.university);
+      const allCourses = await DatabaseService.getCourses(universityId);
       setCourses(allCourses);
     } catch (error) {
       console.error('Error loading courses:', error);
@@ -54,7 +62,9 @@ export default function CourseScreen({ navigation }: any) {
 
     // Apply enrollment filter
     if (selectedFilter === 'enrolled' && userData?.courses) {
-      filtered = filtered.filter(c => userData.courses.includes(c.id));
+      // In Firestore, courses is stored as string[] (IDs), not Course[]
+      const courseIds = userData.courses.map((c: any) => typeof c === 'string' ? c : c.id);
+      filtered = filtered.filter(c => courseIds.includes(c.id));
     }
 
     setFilteredCourses(filtered);
@@ -63,7 +73,7 @@ export default function CourseScreen({ navigation }: any) {
   const styles = createStyles(theme);
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       {/* Search Bar */}
       <View style={styles.searchContainer}>
         <Ionicons name="search" size={20} color={theme.colors.textSecondary} style={styles.searchIcon} />
@@ -110,7 +120,12 @@ export default function CourseScreen({ navigation }: any) {
           >
             <View style={styles.courseHeader}>
               <Text style={styles.courseCode}>{item.code}</Text>
-              {userData?.courses?.includes(item.id) && (
+              {(() => {
+                // In Firestore, courses is stored as string[] (IDs), not Course[]
+                if (!userData?.courses) return false;
+                const courseIds = userData.courses.map((c: any) => typeof c === 'string' ? c : c.id);
+                return courseIds.includes(item.id);
+              })() && (
                 <View style={styles.enrolledBadge}>
                   <Text style={styles.enrolledBadgeText}>Enrolled</Text>
                 </View>
@@ -130,14 +145,14 @@ export default function CourseScreen({ navigation }: any) {
             </View>
           </TouchableOpacity>
         )}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[styles.listContent, { paddingBottom: 100 }]}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyText}>No courses found</Text>
           </View>
         }
       />
-    </View>
+    </SafeAreaView>
   );
 }
 

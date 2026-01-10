@@ -127,19 +127,24 @@ export default function LoginScreen({ navigation }: any) {
             {isLogin ? 'Sign in to continue' : 'Sign up to get started'}
           </Text>
 
-          {!isLogin && (
-            <View style={styles.inputContainer}>
-              <Ionicons name="person-outline" size={20} color={theme.colors.textSecondary} style={styles.inputIcon} />
-              <TextInput
-                style={styles.input}
-                placeholder="Full Name"
-                placeholderTextColor={theme.colors.textSecondary}
-                value={name}
-                onChangeText={setName}
-                autoCapitalize="words"
-              />
-            </View>
-          )}
+                  {!isLogin && (
+                    <View style={styles.nameInputSection}>
+                      <View style={styles.inputContainer}>
+                        <Ionicons name="person-outline" size={20} color={theme.colors.textSecondary} style={styles.inputIcon} />
+                        <TextInput
+                          style={styles.input}
+                          placeholder="Full Name (Must match your ID card)"
+                          placeholderTextColor={theme.colors.textSecondary}
+                          value={name}
+                          onChangeText={setName}
+                          autoCapitalize="words"
+                        />
+                      </View>
+                      <Text style={styles.nameHelperText}>
+                        ℹ️ Enter your name exactly as it appears on your school ID card
+                      </Text>
+                    </View>
+                  )}
 
           <View style={styles.inputContainer}>
             <Ionicons name="mail-outline" size={20} color={theme.colors.textSecondary} style={styles.inputIcon} />
@@ -256,7 +261,7 @@ const createStyles = (theme: any) =>
       alignItems: 'center',
       backgroundColor: theme.colors.surface,
       borderRadius: 12,
-      marginBottom: 16,
+      marginBottom: 8,
       paddingHorizontal: 16,
       borderWidth: 1,
       borderColor: theme.colors.border,
@@ -269,6 +274,16 @@ const createStyles = (theme: any) =>
       height: 50,
       color: theme.colors.text,
       fontSize: 16,
+    },
+    nameInputSection: {
+      marginBottom: 16,
+    },
+    nameHelperText: {
+      fontSize: 12,
+      color: theme.colors.textSecondary,
+      marginLeft: 12,
+      marginTop: 4,
+      fontStyle: 'italic',
     },
     button: {
       backgroundColor: theme.colors.primary,

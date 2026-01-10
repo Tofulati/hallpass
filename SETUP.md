@@ -145,11 +145,6 @@ service cloud.firestore {
       allow update: if request.auth != null;
     }
     
-    match /courses/{courseId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null;
-    }
-    
     match /professors/{professorId} {
       allow read: if request.auth != null;
       match /ratings/{ratingId} {
@@ -194,11 +189,20 @@ service cloud.firestore {
       allow update, delete: if false;
     }
     
-    // Courses collection - public read for authenticated users from same university
+    // Courses collection - authenticated users can read and update members array
     match /courses/{courseId} {
       allow read: if request.auth != null;
-      // Only admins can write (add this later with custom claims)
-      allow write: if false;
+      // Allow users to add themselves to the members array during onboarding
+      // This allows updates that only modify the members array and include the user's ID
+      allow update: if request.auth != null && 
+        // Only allow updating the members field (no other fields can change)
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members']) &&
+        // The new members array must contain the user's ID
+        request.auth.uid in request.resource.data.members &&
+        // The new members array must be a superset of the old one (only additions allowed)
+        request.resource.data.members.hasAll(resource.data.members);
+      // Only admins can create/delete (add this later with custom claims)
+      allow create, delete: if false;
     }
     
     // Course requests - users can submit and read for duplicate checking
@@ -209,11 +213,20 @@ service cloud.firestore {
       allow update, delete: if false;
     }
     
-    // Organizations collection - public read for authenticated users
+    // Organizations collection - authenticated users can read and update members array
     match /organizations/{organizationId} {
       allow read: if request.auth != null;
-      // Only admins can write (add this later with custom claims)
-      allow write: if false;
+      // Allow users to add themselves to the members array during onboarding
+      // This allows updates that only modify the members array and include the user's ID
+      allow update: if request.auth != null && 
+        // Only allow updating the members field (no other fields can change)
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members']) &&
+        // The new members array must contain the user's ID
+        request.auth.uid in request.resource.data.members &&
+        // The new members array must be a superset of the old one (only additions allowed)
+        request.resource.data.members.hasAll(resource.data.members);
+      // Only admins can create/delete (add this later with custom claims)
+      allow create, delete: if false;
     }
     
     // Organization requests - users can submit and read for duplicate checking
@@ -223,6 +236,23 @@ service cloud.firestore {
       // Only admins can update/delete (add custom claim check later)
       allow update, delete: if false;
     }
+    
+    // ID Verifications collection - users can create and read for duplicate checking
+    match /id_verifications/{verificationId} {
+      // Users can create their own verifications
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.userId;
+      // Users can read verifications for duplicate checking (need to check if nameOnCard already exists)
+      // This is necessary to prevent duplicate accounts with the same ID card name
+      allow read: if request.auth != null;
+      // Only admins can update/delete (add custom claim check later)
+      // For now, allow users to update their own pending verifications (e.g., if they made a mistake)
+      allow update: if request.auth != null && 
+        request.auth.uid == resource.data.userId && 
+        resource.data.verificationStatus == 'pending' &&
+        // Only allow updating certain fields, not verified status
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nameOnCard', 'universityNameOnCard', 'verificationStatus', 'verified', 'updatedAt']);
+      allow delete: if false;
+    }
   }
 }
 ```
@@ -230,16 +260,42 @@ service cloud.firestore {
 **Important Notes:**
 - `universities` collection: All authenticated users can **read** universities (needed for onboarding). Writes are disabled (you'll add universities manually in Firebase Console or via admin tools later).
 - `university_requests` collection: Authenticated users can **create** and **read** requests (needed for duplicate checking). Updates/deletes are disabled (review in Firebase Console).
-- `courses` collection: All authenticated users can **read** courses (needed for onboarding). Writes are disabled (courses are created via request processing).
+- `courses` collection: All authenticated users can **read** courses (needed for onboarding). Users can **update** the `members` array to add themselves during onboarding (only additions allowed, no deletions). Create/delete are disabled (courses are created via request processing).
 - `course_requests` collection: Authenticated users can **create** and **read** requests (needed for duplicate checking). Updates/deletes are disabled (processed automatically when threshold of 100 is reached).
-- `organizations` collection: All authenticated users can **read** organizations (needed for onboarding). Writes are disabled (organizations are created via request processing).
+- `organizations` collection: All authenticated users can **read** organizations (needed for onboarding). Users can **update** the `members` array to add themselves during onboarding (only additions allowed, no deletions). Create/delete are disabled (organizations are created via request processing).
 - `organization_requests` collection: Authenticated users can **create** and **read** requests (needed for duplicate checking). Updates/deletes are disabled (processed automatically when threshold of 100 is reached).
+- `id_verifications` collection: Authenticated users can **create** their own ID verification documents and **read** all verifications (needed for duplicate checking to prevent multiple accounts with the same ID card name). Users can **update** their own pending verifications (to correct mistakes). Only admins can update verified status (add custom claim check later).
 
 3. Click **"Publish"**
 
-## Step 3: AWS S3 Setup (Image Storage)
+### 2.6 Create Firestore Composite Indexes
 
-**Note:** Firebase Storage requires payment. We use AWS S3 free tier instead.
+Some queries require composite indexes. Firebase will automatically create these when you first run the queries, or you can create them manually:
+
+1. **Conversations Index** (Required for messages):
+   - Collection: `conversations`
+   - Fields:
+     - `participants` (Array-contains)
+     - `updatedAt` (Descending)
+   - Click the link in the error message when it appears, or manually create in Firebase Console:
+     - Go to **Firestore Database** → **Indexes** → **Create Index**
+     - Collection ID: `conversations`
+     - Add field: `participants` → Type: **Array** → Query scope: **Array-contains**
+     - Add field: `updatedAt` → Type: **Timestamp** → Order: **Descending**
+     - Click **Create**
+
+**Note**: The index creation may take a few minutes. You can still use the app while the index is being created, but the conversations query will fail until the index is ready.
+
+**Note**: Organizations are queried by `universityId` only (without `orderBy`) to avoid requiring a composite index. The results are sorted client-side alphabetically by name. If you want to add an index for better performance, you can create:
+   - Collection: `organizations`
+   - Fields:
+     - `universityId` (Ascending)
+     - `name` (Ascending)
+   This is optional and not required for the app to work.
+
+## Step 3: AWS S3 Setup (Optional - For Other Images)
+
+**Note:** ID card images are not stored. S3 is only needed if you want to store other images (profile pictures, discussion images, etc.). You can skip this step if you don't need image storage.
 
 ### 3.1 Create AWS Account
 

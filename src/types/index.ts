@@ -35,6 +35,7 @@ export interface Course {
   description?: string;
   universityId: string;
   professors: Professor[];
+  members: string[]; // User IDs
   createdAt: Date;
 }
 
@@ -86,6 +87,7 @@ export interface Organization {
   name: string;
   logo: string;
   description: string;
+  universityId: string; // University ID the organization belongs to
   colors: {
     primary: string;
     secondary: string;
@@ -163,6 +165,28 @@ export interface OnboardingData {
   universityId: string;
   courses: string[];
   clubs: string[];
+}
+
+// ID Verification Types
+export interface IDVerification {
+  id: string;
+  userId: string;
+  universityId: string;
+  idCardImage: string; // URL to uploaded ID card image
+  nameOnCard: string; // Extracted name from ID card (for OCR later)
+  universityNameOnCard?: string; // Extracted university name from ID card (for OCR later)
+  verificationStatus: 'pending' | 'verified' | 'rejected' | 'manual_review';
+  verified: boolean;
+  verifiedAt?: Date;
+  reviewedBy?: string; // Admin ID who reviewed (if manual)
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface IDVerificationData {
+  idCardImage: string;
+  nameOnCard?: string;
+  universityNameOnCard?: string;
 }
 
 // ML Model Types

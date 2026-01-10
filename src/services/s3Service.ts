@@ -51,20 +51,37 @@ export class S3Service {
 
   /**
    * Upload image to S3 using presigned URL
+   * React Native compatible version - uses ArrayBuffer directly
    */
   static async uploadWithPresignedUrl(
     imageUri: string,
     presignedUrl: string
   ): Promise<void> {
-    const response = await fetch(imageUri);
-    const blob = await response.blob();
+    // For React Native, convert image URI directly to ArrayBuffer using XMLHttpRequest
+    const arrayBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.onload = function () {
+        if (xhr.response) {
+          resolve(xhr.response);
+        } else {
+          reject(new Error('Failed to get image data'));
+        }
+      };
+      xhr.onerror = function (e) {
+        console.log(e);
+        reject(new TypeError('Network request failed'));
+      };
+      xhr.responseType = 'arraybuffer';
+      xhr.open('GET', imageUri, true);
+      xhr.send(null);
+    });
 
     const uploadResponse = await fetch(presignedUrl, {
       method: 'PUT',
       headers: {
-        'Content-Type': blob.type || 'image/jpeg',
+        'Content-Type': 'image/jpeg',
       },
-      body: blob,
+      body: arrayBuffer,
     });
 
     if (!uploadResponse.ok) {
@@ -75,7 +92,7 @@ export class S3Service {
   /**
    * Upload image directly to S3 (requires credentials)
    * Only use for development/testing
-   * Note: Direct upload in React Native requires converting blob to ArrayBuffer
+   * Note: Direct upload in React Native requires converting image to ArrayBuffer
    */
   static async uploadDirect(
     imageUri: string,
@@ -86,15 +103,29 @@ export class S3Service {
       throw new Error('AWS credentials not configured');
     }
 
-    // Fetch image and convert to ArrayBuffer for React Native compatibility
-    const response = await fetch(imageUri);
-    const blob = await response.blob();
-    const arrayBuffer = await blob.arrayBuffer();
+    // For React Native, convert image URI to ArrayBuffer using XMLHttpRequest
+    const arrayBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.onload = function () {
+        if (xhr.response) {
+          resolve(xhr.response);
+        } else {
+          reject(new Error('Failed to get image data'));
+        }
+      };
+      xhr.onerror = function (e) {
+        console.log(e);
+        reject(new TypeError('Network request failed'));
+      };
+      xhr.responseType = 'arraybuffer';
+      xhr.open('GET', imageUri, true);
+      xhr.send(null);
+    });
 
     const command = new PutObjectCommand({
       Bucket: S3_CONFIG.bucket,
       Key: key,
-      Body: arrayBuffer as any, // AWS SDK accepts ArrayBuffer in React Native
+      Body: arrayBuffer,
       ContentType: contentType,
     });
 

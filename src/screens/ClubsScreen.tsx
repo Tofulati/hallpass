@@ -6,109 +6,150 @@ import {
   FlatList,
   TouchableOpacity,
   TextInput,
-  Image,
+  ActivityIndicator,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Image as ExpoImage } from 'expo-image';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { DatabaseService } from '../services/databaseService';
-import { Club } from '../types';
+import { Organization } from '../types';
 import { Ionicons } from '@expo/vector-icons';
 
 export default function ClubsScreen({ navigation }: any) {
   const { userData } = useAuth();
   const { theme } = useTheme();
-  const [clubs, setClubs] = useState<Club[]>([]);
-  const [filteredClubs, setFilteredClubs] = useState<Club[]>([]);
+  const [organizations, setOrganizations] = useState<Organization[]>([]);
+  const [filteredOrganizations, setFilteredOrganizations] = useState<Organization[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    loadClubs();
+    loadOrganizations();
   }, [userData]);
 
   useEffect(() => {
-    filterClubs();
-  }, [clubs, searchQuery]);
+    filterOrganizations();
+  }, [organizations, searchQuery]);
 
-  const loadClubs = async () => {
-    if (!userData?.university) return;
+  const loadOrganizations = async () => {
+    if (!userData?.university || typeof userData.university !== 'string') {
+      console.log('No university selected, cannot load organizations');
+      setOrganizations([]);
+      return;
+    }
     
+    setLoading(true);
     try {
-      const allClubs = await DatabaseService.getClubs(userData.university);
-      setClubs(allClubs);
-    } catch (error) {
-      console.error('Error loading clubs:', error);
+      console.log('Loading organizations for university:', userData.university);
+      const allOrgs = await DatabaseService.getOrganizations(userData.university);
+      console.log('Loaded organizations:', allOrgs.length, allOrgs);
+      setOrganizations(allOrgs);
+    } catch (error: any) {
+      console.error('Error loading organizations:', error);
+      console.error('Error details:', error.message, error.code);
+      setOrganizations([]);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const filterClubs = () => {
-    let filtered = [...clubs];
+  const filterOrganizations = () => {
+    let filtered = [...organizations];
 
     if (searchQuery) {
       filtered = filtered.filter(
-        c =>
-          c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          c.description?.toLowerCase().includes(searchQuery.toLowerCase())
+        org =>
+          org.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          org.description?.toLowerCase().includes(searchQuery.toLowerCase())
       );
     }
 
-    setFilteredClubs(filtered);
+    setFilteredOrganizations(filtered);
   };
 
   const styles = createStyles(theme);
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       {/* Search Bar */}
       <View style={styles.searchContainer}>
         <Ionicons name="search" size={20} color={theme.colors.textSecondary} style={styles.searchIcon} />
         <TextInput
           style={styles.searchInput}
-          placeholder="Search clubs..."
+          placeholder="Search clubs & organizations..."
           placeholderTextColor={theme.colors.textSecondary}
           value={searchQuery}
           onChangeText={setSearchQuery}
         />
       </View>
 
-      {/* Clubs List */}
-      <FlatList
-        data={filteredClubs}
-        keyExtractor={item => item.id}
-        numColumns={2}
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            style={styles.clubCard}
-            onPress={() => navigation.navigate('ClubDetail', { clubId: item.id })}
-          >
-            {item.image && (
-              <Image source={{ uri: item.image }} style={styles.clubImage} />
-            )}
-            <View style={styles.clubContent}>
-              <Text style={styles.clubName} numberOfLines={2}>
-                {item.name}
-              </Text>
-              {item.description && (
-                <Text style={styles.clubDescription} numberOfLines={2}>
-                  {item.description}
+      {/* Organizations List */}
+      {loading ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={theme.colors.primary} />
+          <Text style={styles.loadingText}>Loading organizations...</Text>
+        </View>
+      ) : (
+        <FlatList
+          data={filteredOrganizations}
+          keyExtractor={item => item.id}
+          numColumns={2}
+          renderItem={({ item }) => (
+            <TouchableOpacity
+              style={styles.clubCard}
+              onPress={() => navigation.navigate('Clubs', {
+                screen: 'ClubDetail',
+                params: { clubId: item.id },
+              })}
+            >
+              {item.logo && item.logo.trim() ? (
+                <ExpoImage
+                  source={{ uri: item.logo }}
+                  style={styles.clubImage}
+                  contentFit="cover"
+                />
+              ) : (
+                <View style={styles.clubImagePlaceholder}>
+                  <Ionicons name="people" size={32} color={theme.colors.textSecondary} />
+                </View>
+              )}
+              <View style={styles.clubContent}>
+                <Text style={styles.clubName} numberOfLines={2}>
+                  {item.name}
+                </Text>
+                {item.description && (
+                  <Text style={styles.clubDescription} numberOfLines={2}>
+                    {item.description}
+                  </Text>
+                )}
+                <View style={styles.clubFooter}>
+                  <Ionicons name="people" size={14} color={theme.colors.textSecondary} />
+                  <Text style={styles.clubMembers}>
+                    {item.members?.length || 0} {item.members?.length === 1 ? 'member' : 'members'}
+                  </Text>
+                </View>
+              </View>
+            </TouchableOpacity>
+          )}
+          contentContainerStyle={styles.listContent}
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Ionicons name="people-outline" size={64} color={theme.colors.textSecondary} />
+              <Text style={styles.emptyText}>No organizations found</Text>
+              {!searchQuery && (
+                <Text style={styles.emptySubtext}>
+                  {userData?.university ? 'No organizations available for your university yet' : 'Please select a university'}
                 </Text>
               )}
-              <View style={styles.clubFooter}>
-                <Ionicons name="people" size={14} color={theme.colors.textSecondary} />
-                <Text style={styles.clubMembers}>
-                  {item.members?.length || 0} members
-                </Text>
-              </View>
+              {searchQuery && (
+                <Text style={styles.emptySubtext}>Try adjusting your search</Text>
+              )}
             </View>
-          </TouchableOpacity>
-        )}
-        contentContainerStyle={styles.listContent}
-        ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>No clubs found</Text>
-          </View>
-        }
-      />
-    </View>
+          }
+        />
+      )}
+    </SafeAreaView>
   );
 }
 
@@ -123,6 +164,7 @@ const createStyles = (theme: any) =>
       alignItems: 'center',
       backgroundColor: theme.colors.surface,
       margin: 16,
+      marginTop: 8,
       borderRadius: 12,
       paddingHorizontal: 16,
       borderWidth: 1,
@@ -137,8 +179,21 @@ const createStyles = (theme: any) =>
       color: theme.colors.text,
       fontSize: 16,
     },
+    loadingContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 32,
+    },
+    loadingText: {
+      marginTop: 12,
+      fontSize: 14,
+      color: theme.colors.textSecondary,
+    },
     listContent: {
       padding: 8,
+      paddingBottom: 100, // Extra padding to prevent content from being hidden behind tabs
+      flexGrow: 1,
     },
     clubCard: {
       flex: 1,
@@ -153,6 +208,13 @@ const createStyles = (theme: any) =>
       width: '100%',
       height: 120,
       backgroundColor: theme.colors.border,
+    },
+    clubImagePlaceholder: {
+      width: '100%',
+      height: 120,
+      backgroundColor: theme.colors.border + '40',
+      justifyContent: 'center',
+      alignItems: 'center',
     },
     clubContent: {
       padding: 12,
@@ -184,5 +246,12 @@ const createStyles = (theme: any) =>
     emptyText: {
       fontSize: 16,
       color: theme.colors.textSecondary,
+      marginTop: 12,
+      fontWeight: '600',
+    },
+    emptySubtext: {
+      fontSize: 14,
+      color: theme.colors.textSecondary,
+      marginTop: 8,
     },
   });

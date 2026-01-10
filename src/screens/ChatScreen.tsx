@@ -39,13 +39,14 @@ export default function ChatScreen({ route, navigation }: any) {
   };
 
   const sendMessage = async () => {
-    if (!messageText.trim() || !user || !otherUserId) return;
+    if (!messageText.trim() || !user || !otherUserId || !conversationId) return;
 
     try {
-      await DatabaseService.sendMessage({
+      await DatabaseService.sendMessage(conversationId, {
         senderId: user.uid,
         receiverId: otherUserId,
         content: messageText.trim(),
+        read: false,
       });
       setMessageText('');
       await loadMessages();

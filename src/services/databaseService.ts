@@ -14,6 +14,7 @@ import {
   writeBatch,
   Timestamp,
   QueryConstraint,
+  arrayUnion,
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import {
@@ -79,8 +80,10 @@ export class DatabaseService {
       courseId?: string;
       professorId?: string;
       clubId?: string;
+      organizationId?: string;
       tags?: string[];
       userId?: string;
+      isPrivate?: boolean;
     },
     sortBy: SortOption = 'popularity',
     limitCount: number = 50
@@ -97,16 +100,34 @@ export class DatabaseService {
       if (filters?.clubId) {
         constraints.push(where('clubId', '==', filters.clubId));
       }
+      if (filters?.organizationId) {
+        constraints.push(where('organizationId', '==', filters.organizationId));
+      }
       if (filters?.userId) {
         constraints.push(where('userId', '==', filters.userId));
       }
+      if (filters?.isPrivate !== undefined) {
+        constraints.push(where('isPrivate', '==', filters.isPrivate));
+      }
 
+      // Note: Sorting by score/controversy requires those fields to exist in Firestore
+      // If they don't exist, we'll sort client-side after fetching
+      let needsClientSort = false;
       switch (sortBy) {
         case 'popularity':
-          constraints.push(orderBy('score', 'desc'));
+          // Try to sort by score, but fallback to client-side if not available
+          try {
+            constraints.push(orderBy('score', 'desc'));
+          } catch {
+            needsClientSort = true;
+          }
           break;
         case 'controversy':
-          constraints.push(orderBy('controversy', 'desc'));
+          try {
+            constraints.push(orderBy('controversy', 'desc'));
+          } catch {
+            needsClientSort = true;
+          }
           break;
         case 'recent':
           constraints.push(orderBy('createdAt', 'desc'));
@@ -118,12 +139,53 @@ export class DatabaseService {
       const q = query(collection(db, 'discussions'), ...constraints);
       const querySnapshot = await getDocs(q);
       
-      return querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        createdAt: doc.data().createdAt?.toDate() || new Date(),
-        updatedAt: doc.data().updatedAt?.toDate() || new Date(),
-      })) as Discussion[];
+      let discussions = querySnapshot.docs.map(doc => {
+        const data = doc.data();
+        let createdAt = new Date();
+        let updatedAt = new Date();
+        
+        if (data.createdAt && typeof data.createdAt.toDate === 'function') {
+          createdAt = data.createdAt.toDate();
+        } else if (data.createdAt instanceof Date) {
+          createdAt = data.createdAt;
+        } else if (typeof data.createdAt === 'string' || typeof data.createdAt === 'number') {
+          const parsedDate = new Date(data.createdAt);
+          if (!isNaN(parsedDate.getTime())) {
+            createdAt = parsedDate;
+          }
+        }
+        
+        if (data.updatedAt && typeof data.updatedAt.toDate === 'function') {
+          updatedAt = data.updatedAt.toDate();
+        } else if (data.updatedAt instanceof Date) {
+          updatedAt = data.updatedAt;
+        } else if (typeof data.updatedAt === 'string' || typeof data.updatedAt === 'number') {
+          const parsedDate = new Date(data.updatedAt);
+          if (!isNaN(parsedDate.getTime())) {
+            updatedAt = parsedDate;
+          }
+        }
+
+        return {
+          id: doc.id,
+          ...data,
+          createdAt,
+          updatedAt,
+        } as Discussion;
+      });
+
+      // Client-side sorting if needed
+      if (needsClientSort && sortBy === 'popularity') {
+        discussions.sort((a, b) => {
+          const aScore = (a.score || 0) + (a.upvotes?.length || 0) - (a.downvotes?.length || 0);
+          const bScore = (b.score || 0) + (b.upvotes?.length || 0) - (b.downvotes?.length || 0);
+          return bScore - aScore;
+        });
+      } else if (needsClientSort && sortBy === 'controversy') {
+        discussions.sort((a, b) => (b.controversy || 0) - (a.controversy || 0));
+      }
+
+      return discussions;
     } catch (error) {
       console.error('Error getting discussions:', error);
       return [];
@@ -173,7 +235,81 @@ export class DatabaseService {
     try {
       const courseDoc = await getDoc(doc(db, 'courses', courseId));
       if (!courseDoc.exists()) return null;
-      return { id: courseDoc.id, ...courseDoc.data() } as Course;
+      
+      const data = courseDoc.data();
+      
+      // Handle createdAt - it might be a Timestamp, Date, null, or undefined
+      let createdAt = new Date();
+      if (data.createdAt != null) {
+        try {
+          if (data.createdAt && typeof data.createdAt.toDate === 'function') {
+            // It's a Firestore Timestamp
+            createdAt = data.createdAt.toDate();
+          } else if (data.createdAt instanceof Date) {
+            // It's already a Date
+            createdAt = data.createdAt;
+          } else if (typeof data.createdAt === 'string' || typeof data.createdAt === 'number') {
+            // It's a string or timestamp number
+            const parsedDate = new Date(data.createdAt);
+            if (!isNaN(parsedDate.getTime())) {
+              createdAt = parsedDate;
+            }
+          }
+        } catch (dateError) {
+          console.warn('Error parsing createdAt for course:', courseDoc.id, dateError);
+          // createdAt already defaults to new Date()
+        }
+      }
+
+      // Convert string[] to Professor[] format for type compatibility (same as getCourses)
+      const professorsData = data.professors || [];
+      const professors: Professor[] = Array.isArray(professorsData) && professorsData.length > 0
+        ? professorsData.map((prof: any, index: number) => {
+            // If prof is a string (professor name), convert to Professor object
+            if (typeof prof === 'string') {
+              return {
+                id: `prof-${index}-${prof.replace(/\s+/g, '-').toLowerCase()}`,
+                name: prof.trim(),
+                courses: [],
+                ratings: [],
+                averageRating: {
+                  hardness: 0,
+                  coursework: 0,
+                  communication: 0,
+                  enjoyment: 0,
+                },
+              } as Professor;
+            }
+            // If it's already an object, use it as-is (with defaults if needed)
+            return {
+              id: prof.id || `prof-${index}`,
+              name: prof.name || '',
+              email: prof.email,
+              courses: prof.courses || [],
+              ratings: prof.ratings || [],
+              averageRating: prof.averageRating || {
+                hardness: 0,
+                coursework: 0,
+                communication: 0,
+                enjoyment: 0,
+              },
+            } as Professor;
+          })
+        : [];
+      
+      // Handle members - array of user IDs
+      const members: string[] = data.members || [];
+      
+      return {
+        id: courseDoc.id,
+        code: data.code || '',
+        name: data.name || '',
+        description: data.description || undefined,
+        universityId: data.universityId || '',
+        professors,
+        members,
+        createdAt,
+      } as Course;
     } catch (error) {
       console.error('Error getting course:', error);
       return null;
@@ -212,9 +348,45 @@ export class DatabaseService {
           }
         }
         
-        // Handle professors - in database it's string[] (IDs), but TypeScript type says Professor[]
-        // For onboarding, we just need an empty array since we don't need full professor objects
-        const professors: Professor[] = [];
+        // Handle professors - in database it's string[] (professor names), but TypeScript type says Professor[]
+        // Convert string[] to Professor[] format for type compatibility
+        const professorsData = data.professors || [];
+        const professors: Professor[] = Array.isArray(professorsData) && professorsData.length > 0
+          ? professorsData.map((prof: any, index: number) => {
+              // If prof is a string (professor name), convert to Professor object
+              if (typeof prof === 'string') {
+                return {
+                  id: `prof-${index}-${prof.replace(/\s+/g, '-').toLowerCase()}`,
+                  name: prof.trim(),
+                  courses: [],
+                  ratings: [],
+                  averageRating: {
+                    hardness: 0,
+                    coursework: 0,
+                    communication: 0,
+                    enjoyment: 0,
+                  },
+                } as Professor;
+              }
+              // If it's already an object, use it as-is (with defaults if needed)
+              return {
+                id: prof.id || `prof-${index}`,
+                name: prof.name || '',
+                email: prof.email,
+                courses: prof.courses || [],
+                ratings: prof.ratings || [],
+                averageRating: prof.averageRating || {
+                  hardness: 0,
+                  coursework: 0,
+                  communication: 0,
+                  enjoyment: 0,
+                },
+              } as Professor;
+            })
+          : [];
+        
+        // Handle members - array of user IDs
+        const members: string[] = data.members || [];
         
         return {
           id: doc.id,
@@ -223,6 +395,7 @@ export class DatabaseService {
           description: data.description || undefined,
           universityId: data.universityId || universityId,
           professors,
+          members,
           createdAt,
         } as Course;
       });
@@ -360,25 +533,154 @@ export class DatabaseService {
   }
 
   // Organization Operations
-  static async getOrganizations(): Promise<Organization[]> {
+  static async getOrganizations(universityId?: string): Promise<Organization[]> {
     try {
-      const q = query(collection(db, 'organizations'), orderBy('name', 'asc'));
+      let q;
+      if (universityId) {
+        // Query by universityId first (no orderBy to avoid index requirement)
+        q = query(
+          collection(db, 'organizations'),
+          where('universityId', '==', universityId)
+        );
+      } else {
+        q = query(collection(db, 'organizations'), orderBy('name', 'asc'));
+      }
       const querySnapshot = await getDocs(q);
       
-      return querySnapshot.docs.map(doc => {
+      let organizations = querySnapshot.docs.map(doc => {
         const data = doc.data();
+        // Clean logo URL - remove any spaces that might have been introduced
+        const logo = data.logo ? data.logo.trim().replace(/\s+/g, '') : '';
         return {
           id: doc.id,
           name: data.name || '',
-          logo: data.logo || '',
+          logo: logo,
           description: data.description || '',
+          universityId: data.universityId || '',
           colors: data.colors || { primary: '#6366f1', secondary: '#8b92a7' },
           members: data.members || [],
         } as Organization;
       });
-    } catch (error) {
+      
+      // Sort by name client-side (to avoid Firestore index requirement)
+      if (universityId) {
+        organizations.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+      }
+      
+      return organizations;
+    } catch (error: any) {
       console.error('Error getting organizations:', error);
+      // If index error, try without orderBy
+      if (error.message?.includes('index')) {
+        try {
+          const q = universityId
+            ? query(collection(db, 'organizations'), where('universityId', '==', universityId))
+            : query(collection(db, 'organizations'));
+          const querySnapshot = await getDocs(q);
+          let organizations = querySnapshot.docs.map(doc => {
+            const data = doc.data();
+            // Clean logo URL - remove any spaces that might have been introduced
+            const logo = data.logo ? data.logo.trim().replace(/\s+/g, '') : '';
+            return {
+              id: doc.id,
+              name: data.name || '',
+              logo: logo,
+              description: data.description || '',
+              universityId: data.universityId || '',
+              colors: data.colors || { primary: '#6366f1', secondary: '#8b92a7' },
+              members: data.members || [],
+            } as Organization;
+          });
+          // Sort client-side
+          organizations.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+          return organizations;
+        } catch (fallbackError) {
+          console.error('Error in fallback query:', fallbackError);
+          return [];
+        }
+      }
       return [];
+    }
+  }
+
+  /**
+   * Get a single organization by ID
+   */
+  static async getOrganization(organizationId: string): Promise<Organization | null> {
+    try {
+      const orgDoc = await getDoc(doc(db, 'organizations', organizationId));
+      if (!orgDoc.exists()) return null;
+      const data = orgDoc.data();
+      // Clean logo URL - remove any spaces that might have been introduced
+      const logo = data.logo ? data.logo.trim().replace(/\s+/g, '') : '';
+      return {
+        id: orgDoc.id,
+        name: data.name || '',
+        logo: logo,
+        description: data.description || '',
+        universityId: data.universityId || '',
+        colors: data.colors || { primary: '#6366f1', secondary: '#8b92a7' },
+        members: data.members || [],
+      } as Organization;
+    } catch (error) {
+      console.error('Error getting organization:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Join an organization (follow)
+   */
+  static async joinOrganization(organizationId: string, userId: string): Promise<void> {
+    try {
+      // Add user to organization's members array
+      const orgRef = doc(db, 'organizations', organizationId);
+      await updateDoc(orgRef, {
+        members: arrayUnion(userId),
+      });
+
+      // Add organization to user's clubs array
+      const userRef = doc(db, 'users', userId);
+      await updateDoc(userRef, {
+        clubs: arrayUnion(organizationId),
+        updatedAt: Timestamp.now(),
+      });
+    } catch (error) {
+      console.error('Error joining organization:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Leave an organization (unfollow)
+   */
+  static async leaveOrganization(organizationId: string, userId: string): Promise<void> {
+    try {
+      // Remove user from organization's members array
+      const orgRef = doc(db, 'organizations', organizationId);
+      const orgDoc = await getDoc(orgRef);
+      if (orgDoc.exists()) {
+        const currentMembers = orgDoc.data().members || [];
+        const updatedMembers = currentMembers.filter((id: string) => id !== userId);
+        await updateDoc(orgRef, {
+          members: updatedMembers,
+        });
+      }
+
+      // Remove organization from user's clubs array
+      const userRef = doc(db, 'users', userId);
+      const userDoc = await getDoc(userRef);
+      if (userDoc.exists()) {
+        const currentClubs = userDoc.data().clubs || [];
+        const updatedClubs = currentClubs.filter((id: string) => id !== organizationId);
+        await updateDoc(userRef, {
+          clubs: updatedClubs,
+          updatedAt: Timestamp.now(),
+        });
+      }
+    } catch (error) {
+      console.error('Error leaving organization:', error);
+      throw error;
     }
   }
 
@@ -433,26 +735,35 @@ export class DatabaseService {
   /**
    * Submit an organization request for verification
    */
-  static async requestOrganization(organization: { name: string; logo: string; description: string; colors: { primary: string; secondary: string } }, userId: string): Promise<string> {
+  static async requestOrganization(organization: { name: string; logo: string; description: string; universityId: string; colors: { primary: string; secondary: string } }, userId: string): Promise<string> {
     try {
-      // Get all existing organizations and check for duplicates (case-insensitive)
-      const existingSnapshot = await getDocs(collection(db, 'organizations'));
-      const requestsSnapshot = await getDocs(collection(db, 'organization_requests'));
+      // Get all existing organizations for this university and check for duplicates (case-insensitive)
+      const existingSnapshot = await getDocs(
+        query(collection(db, 'organizations'), where('universityId', '==', organization.universityId))
+      );
+      const requestsSnapshot = await getDocs(
+        query(collection(db, 'organization_requests'), where('universityId', '==', organization.universityId))
+      );
 
-      // Check for duplicates (case-insensitive)
+      // Check for duplicates (case-insensitive) within the same university
       const allOrganizations = [...existingSnapshot.docs, ...requestsSnapshot.docs];
       const duplicate = allOrganizations.find(doc => {
         const data = doc.data();
-        return (data.name || '').toLowerCase().trim() === organization.name.toLowerCase().trim();
+        return (data.name || '').toLowerCase().trim() === organization.name.toLowerCase().trim() &&
+               (data.universityId || '') === organization.universityId;
       });
 
       if (duplicate) {
-        throw new Error('An organization with this name already exists or is pending review');
+        throw new Error('An organization with this name already exists or is pending review for this university');
       }
 
+      // Clean logo URL - remove any spaces that might have been introduced
+      const cleanedLogo = organization.logo ? organization.logo.trim().replace(/\s+/g, '') : '';
+      
       // Create request document
       const docRef = await addDoc(collection(db, 'organization_requests'), {
         ...organization,
+        logo: cleanedLogo,
         nameLowercase: organization.name.toLowerCase().trim(),
         members: [],
         userId: userId,
@@ -477,13 +788,32 @@ export class DatabaseService {
   }
 
   // Message Operations
-  static async sendMessage(message: Omit<Message, 'id' | 'createdAt'>): Promise<string> {
+  static async sendMessage(conversationId: string, message: Omit<Message, 'id' | 'createdAt'>): Promise<string> {
     try {
-      const docRef = await addDoc(collection(db, 'messages'), {
+      // Add message to conversation subcollection
+      const messageRef = collection(db, 'conversations', conversationId, 'messages');
+      const docRef = await addDoc(messageRef, {
         ...message,
         read: false,
         createdAt: Timestamp.now(),
       });
+
+      // Update conversation's lastMessage and updatedAt
+      const conversationRef = doc(db, 'conversations', conversationId);
+      const lastMessageData = {
+        id: docRef.id,
+        senderId: message.senderId,
+        receiverId: message.receiverId,
+        content: message.content,
+        images: message.images || [],
+        read: false,
+        createdAt: Timestamp.now(),
+      };
+      await updateDoc(conversationRef, {
+        lastMessage: lastMessageData,
+        updatedAt: Timestamp.now(),
+      });
+
       return docRef.id;
     } catch (error) {
       console.error('Error sending message:', error);
@@ -507,6 +837,41 @@ export class DatabaseService {
     } catch (error) {
       console.error('Error getting conversations:', error);
       return [];
+    }
+  }
+
+  static async getOrCreateConversation(userId1: string, userId2: string): Promise<string> {
+    try {
+      // Check if conversation already exists
+      const q = query(
+        collection(db, 'conversations'),
+        where('participants', 'array-contains', userId1)
+      );
+      const querySnapshot = await getDocs(q);
+      
+      // Find conversation with both participants
+      const existingConv = querySnapshot.docs.find(doc => {
+        const data = doc.data();
+        const participants = data.participants || [];
+        return participants.includes(userId1) && participants.includes(userId2) && participants.length === 2;
+      });
+
+      if (existingConv) {
+        return existingConv.id;
+      }
+
+      // Create new conversation
+      const participants = [userId1, userId2].sort(); // Sort for consistency
+      const docRef = await addDoc(collection(db, 'conversations'), {
+        participants,
+        lastMessage: null,
+        updatedAt: Timestamp.now(),
+        createdAt: Timestamp.now(),
+      });
+      return docRef.id;
+    } catch (error) {
+      console.error('Error getting/creating conversation:', error);
+      throw error;
     }
   }
 
@@ -1056,6 +1421,7 @@ export class DatabaseService {
         currentBatch.set(newCourseRef, {
           ...courseData,
           professors: courseData.professors || [], // Include professors from courseData
+          members: [], // Initialize empty members array
           createdAt: Timestamp.now(),
         });
         batchOps++;
@@ -1138,7 +1504,7 @@ export class DatabaseService {
       console.log(`Grouped ${requestDocs.length} organization requests into ${groups.length} groups`);
 
       // Process each group and create organizations
-      const organizationsToAdd: Array<{ name: string; logo: string; description: string; colors: { primary: string; secondary: string } }> = [];
+      const organizationsToAdd: Array<{ name: string; logo: string; description: string; universityId: string; colors: { primary: string; secondary: string } }> = [];
       const requestIdsToDelete: string[] = [];
 
       for (const group of groups) {
@@ -1148,23 +1514,32 @@ export class DatabaseService {
         const names = group.map(doc => doc.data().name || '').filter(n => n.trim());
         const logos = group.map(doc => doc.data().logo || '').filter(l => l.trim());
         const descriptions = group.map(doc => doc.data().description || '').filter(d => d.trim());
+        const universityIds = group.map(doc => doc.data().universityId || '').filter(uid => uid.trim());
         const primaryColors = group.map(doc => doc.data().colors?.primary || '').filter(c => c.trim());
         const secondaryColors = group.map(doc => doc.data().colors?.secondary || '').filter(c => c.trim());
 
         // Find most common values
         const mostCommonName = this.findMostCommonNonEmpty(names);
-        if (!mostCommonName) continue;
+        const mostCommonUniversityId = this.findMostCommonNonEmpty(universityIds);
+        if (!mostCommonName || !mostCommonUniversityId) continue;
 
-        // Check for duplicate against existing organizations
+        // Check for duplicate against existing organizations (same university)
         const nameLowercase = mostCommonName.toLowerCase().trim();
-        if (existingNames.has(nameLowercase)) {
-          console.log(`Skipping duplicate organization: ${mostCommonName}`);
+        const existingOrgForUni = existingSnapshot.docs.find(doc => {
+          const data = doc.data();
+          return (data.nameLowercase || data.name?.toLowerCase().trim()) === nameLowercase &&
+                 (data.universityId || '') === mostCommonUniversityId;
+        });
+        if (existingOrgForUni) {
+          console.log(`Skipping duplicate organization: ${mostCommonName} for university ${mostCommonUniversityId}`);
           group.forEach(doc => requestIdsToDelete.push(doc.id));
           continue;
         }
 
         // Get most common values, with fallbacks
-        const logo = this.findMostCommonNonEmpty(logos) || '';
+        let logo = this.findMostCommonNonEmpty(logos) || '';
+        // Clean logo URL - remove any spaces that might have been introduced
+        logo = logo.trim().replace(/\s+/g, '');
         const description = this.findMostCommonNonEmpty(descriptions) || '';
         const primaryColor = this.findMostCommonNonEmpty(primaryColors) || '#6366f1';
         const secondaryColor = this.findMostCommonNonEmpty(secondaryColors) || '#8b92a7';
@@ -1172,8 +1547,9 @@ export class DatabaseService {
         // Prepare organization data
         const organizationData = {
           name: mostCommonName.trim(),
-          logo: logo.trim(),
+          logo: logo,
           description: description.trim(),
+          universityId: mostCommonUniversityId.trim(),
           colors: {
             primary: primaryColor.trim(),
             secondary: secondaryColor.trim(),

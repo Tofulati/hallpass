@@ -2,6 +2,7 @@ import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
 
@@ -49,6 +50,16 @@ const CourseStack = () => (
       component={CourseDetailScreen}
       options={{ title: 'Course Details' }}
     />
+    <Stack.Screen 
+      name="CreateDiscussion" 
+      component={CreateDiscussionScreen}
+      options={{ title: 'Create Discussion' }}
+    />
+    <Stack.Screen 
+      name="Profile" 
+      component={ProfileScreen}
+      options={{ title: 'Profile' }}
+    />
   </Stack.Navigator>
 );
 
@@ -64,6 +75,16 @@ const ClubsStack = () => (
       component={ClubDetailScreen}
       options={{ title: 'Club Details' }}
     />
+    <Stack.Screen 
+      name="CreateDiscussion" 
+      component={CreateDiscussionScreen}
+      options={{ title: 'Create Discussion' }}
+    />
+    <Stack.Screen 
+      name="Profile" 
+      component={ProfileScreen}
+      options={{ title: 'Profile' }}
+    />
   </Stack.Navigator>
 );
 
@@ -78,6 +99,11 @@ const MessageStack = () => (
       name="Chat" 
       component={ChatScreen}
       options={{ title: 'Chat' }}
+    />
+    <Stack.Screen 
+      name="Profile" 
+      component={ProfileScreen}
+      options={{ title: 'Profile' }}
     />
   </Stack.Navigator>
 );
@@ -106,45 +132,56 @@ export default function AppNavigator() {
   const { theme } = useTheme();
 
   return (
-    <NavigationContainer>
-      <Tab.Navigator
-        screenOptions={({ route }) => ({
-          tabBarIcon: ({ focused, color, size }) => {
-            let iconName: keyof typeof Ionicons.glyphMap;
+    <SafeAreaProvider>
+      <NavigationContainer>
+        <Tab.Navigator
+          screenOptions={({ route }) => ({
+            tabBarIcon: ({ focused, color, size }) => {
+              let iconName: keyof typeof Ionicons.glyphMap;
 
-            if (route.name === 'Bulletin') {
-              iconName = focused ? 'home' : 'home-outline';
-            } else if (route.name === 'Course') {
-              iconName = focused ? 'book' : 'book-outline';
-            } else if (route.name === 'Clubs') {
-              iconName = focused ? 'people' : 'people-outline';
-            } else if (route.name === 'Message') {
-              iconName = focused ? 'chatbubbles' : 'chatbubbles-outline';
-            } else if (route.name === 'Search') {
-              iconName = focused ? 'search' : 'search-outline';
-            } else if (route.name === 'User') {
-              iconName = focused ? 'person' : 'person-outline';
-            } else {
-              iconName = 'ellipse-outline';
-            }
+              if (route.name === 'Bulletin') {
+                iconName = focused ? 'home' : 'home-outline';
+              } else if (route.name === 'Course') {
+                iconName = focused ? 'book' : 'book-outline';
+              } else if (route.name === 'Clubs') {
+                iconName = focused ? 'people' : 'people-outline';
+              } else if (route.name === 'Message') {
+                iconName = focused ? 'chatbubbles' : 'chatbubbles-outline';
+              } else if (route.name === 'Search') {
+                iconName = focused ? 'search' : 'search-outline';
+              } else if (route.name === 'User') {
+                iconName = focused ? 'person' : 'person-outline';
+              } else {
+                iconName = 'ellipse-outline';
+              }
 
-            return <Ionicons name={iconName} size={size} color={color} />;
-          },
-          tabBarActiveTintColor: theme.colors.primary,
-          tabBarInactiveTintColor: theme.colors.textSecondary,
-          tabBarStyle: {
-            backgroundColor: theme.colors.surface,
-            borderTopColor: theme.colors.border,
-          },
-          headerStyle: {
-            backgroundColor: theme.colors.surface,
-          },
-          headerTintColor: theme.colors.text,
-          headerTitleStyle: {
-            color: theme.colors.text,
-          },
-        })}
-      >
+              return <Ionicons name={iconName} size={size} color={color} />;
+            },
+            tabBarActiveTintColor: theme.colors.primary,
+            tabBarInactiveTintColor: theme.colors.textSecondary,
+            tabBarShowLabel: false, // Remove text labels
+            tabBarStyle: {
+              backgroundColor: theme.colors.background,
+              borderTopColor: theme.colors.background,
+              borderTopWidth: 1,
+              paddingBottom: 0,
+              paddingTop: 0,
+              height: 80,
+              elevation: 0,
+              shadowColor: 'transparent',
+              shadowOffset: { width: 0, height: 0 },
+              shadowOpacity: 0,
+              shadowRadius: 0,
+            },
+            headerStyle: {
+              backgroundColor: theme.colors.surface,
+            },
+            headerTintColor: theme.colors.text,
+            headerTitleStyle: {
+              color: theme.colors.text,
+            },
+          })}
+        >
         <Tab.Screen 
           name="Bulletin" 
           component={BulletinStack}
@@ -175,7 +212,8 @@ export default function AppNavigator() {
           component={UserStack}
           options={{ headerShown: false }}
         />
-      </Tab.Navigator>
-    </NavigationContainer>
+        </Tab.Navigator>
+      </NavigationContainer>
+    </SafeAreaProvider>
   );
 }
