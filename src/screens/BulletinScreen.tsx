@@ -104,14 +104,29 @@ export default function BulletinScreen({ navigation }: any) {
 
   const loadDiscussions = async () => {
     try {
+      // Get all discussions (general, course, and organization discussions)
+      // Filter out private course discussions unless user is enrolled
       const allDiscussions = await DatabaseService.getDiscussions(
         {},
         sortBy,
-        100
+        200 // Increased limit to get more discussions
       );
       
+      // Filter private discussions - only show if user is enrolled in the course
+      const userCourseIds = userData?.courses ? 
+        (userData.courses as any[]).map((c: any) => typeof c === 'string' ? c : c.id) : [];
+      
+      const visibleDiscussions = allDiscussions.filter(discussion => {
+        // If discussion is private, check if user is enrolled
+        if (discussion.isPrivate && discussion.courseId) {
+          return userCourseIds.includes(discussion.courseId);
+        }
+        // Show all non-private discussions
+        return true;
+      });
+      
       // Apply ML ranking
-      const rankedDiscussions = allDiscussions.map(discussion => {
+      const rankedDiscussions = visibleDiscussions.map(discussion => {
         const rankingInput = {
           upvotes: discussion.upvotes.length,
           downvotes: discussion.downvotes.length,

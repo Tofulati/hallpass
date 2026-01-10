@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   FlatList,
   RefreshControl,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { Image as ExpoImage } from 'expo-image';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
@@ -51,6 +52,16 @@ export default function ClubDetailScreen({ route, navigation }: any) {
     }
   }, [organization, isMember]);
 
+  // Reload discussions when screen comes into focus (e.g., after creating a discussion)
+  useFocusEffect(
+    useCallback(() => {
+      if (orgId && isMember && organization) {
+        loadDiscussions();
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [orgId, isMember, organization])
+  );
+
   const loadOrganization = async () => {
     setLoading(true);
     setImageError(false);
@@ -76,14 +87,59 @@ export default function ClubDetailScreen({ route, navigation }: any) {
   };
 
   const loadDiscussions = async () => {
-    if (!organization) return;
+    if (!orgId) return;
     
     try {
-      const allDiscussions = await DatabaseService.getDiscussions(
-        { organizationId: organization.id },
+      // Normalize orgId before querying (trim to ensure consistency)
+      const normalizedOrgId = orgId.trim();
+      
+      // Load organization-specific discussions using normalized orgId from route params
+      const orgDiscussions = await DatabaseService.getDiscussions(
+        { organizationId: normalizedOrgId },
         'popularity',
-        50
+        100
       );
+      
+      console.log('Loaded org discussions for', normalizedOrgId, ':', {
+        count: orgDiscussions.length,
+        discussions: orgDiscussions.map(d => ({
+          id: d.id,
+          title: d.title.substring(0, 30),
+          organizationId: d.organizationId,
+          isPrivate: d.isPrivate,
+        })),
+      });
+      
+      const normalizedOrgDiscussions = orgDiscussions.filter(d => {
+        // Normalize organizationId comparison (handle string trimming and empty strings)
+        if (!d.organizationId || typeof d.organizationId !== 'string') {
+          return false; // Skip discussions without organizationId
+        }
+        const dOrgId = d.organizationId.trim();
+        return dOrgId === normalizedOrgId;
+      });
+      
+      // Load all discussions and filter for general ones (no courseId and no organizationId)
+      const allDiscussionsRaw = await DatabaseService.getDiscussions(
+        {},
+        'popularity',
+        200
+      );
+      
+      // Filter general discussions (no courseId, no organizationId, not private)
+      // Handle both undefined, null, and empty string cases
+      const generalDiscussions = allDiscussionsRaw.filter(d => {
+        const hasCourseId = d.courseId && typeof d.courseId === 'string' && d.courseId.trim() !== '';
+        const hasOrganizationId = d.organizationId && typeof d.organizationId === 'string' && d.organizationId.trim() !== '';
+        return !hasCourseId && !hasOrganizationId && !d.isPrivate; // General discussions are never private
+      });
+      
+      // Combine organization and general discussions, removing duplicates
+      const allDiscussionsMap = new Map<string, Discussion>();
+      [...normalizedOrgDiscussions, ...generalDiscussions].forEach(d => {
+        allDiscussionsMap.set(d.id, d);
+      });
+      const allDiscussions = Array.from(allDiscussionsMap.values());
       
       // Apply ML ranking
       const rankedDiscussions = allDiscussions.map(discussion => {

@@ -67,13 +67,51 @@ export class DatabaseService {
   // Discussion Operations
   static async createDiscussion(discussion: Omit<Discussion, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> {
     try {
-      const docRef = await addDoc(collection(db, 'discussions'), {
-        ...discussion,
+      // Filter out undefined values - Firestore doesn't store undefined fields
+      const discussionData: any = {
+        userId: discussion.userId,
+        title: discussion.title,
+        content: discussion.content,
+        tags: discussion.tags || [],
+        upvotes: discussion.upvotes || [],
+        downvotes: discussion.downvotes || [],
+        comments: discussion.comments || [],
         score: 0,
         controversy: 0,
+        isPrivate: discussion.isPrivate || false,
         createdAt: Timestamp.now(),
         updatedAt: Timestamp.now(),
+      };
+
+      // Only include optional fields if they exist (not undefined)
+      if (discussion.images && discussion.images.length > 0) {
+        discussionData.images = discussion.images;
+      }
+      // Normalize and include courseId/organizationId if provided
+      if (discussion.courseId && typeof discussion.courseId === 'string' && discussion.courseId.trim()) {
+        discussionData.courseId = discussion.courseId.trim();
+      }
+      if (discussion.organizationId && typeof discussion.organizationId === 'string' && discussion.organizationId.trim()) {
+        discussionData.organizationId = discussion.organizationId.trim();
+      }
+      if (discussion.professorId && typeof discussion.professorId === 'string' && discussion.professorId.trim()) {
+        discussionData.professorId = discussion.professorId.trim();
+      }
+      if (discussion.clubId && typeof discussion.clubId === 'string' && discussion.clubId.trim()) {
+        discussionData.clubId = discussion.clubId.trim();
+      }
+
+      const docRef = await addDoc(collection(db, 'discussions'), discussionData);
+      
+      // Log for debugging
+      console.log('Discussion created successfully:', {
+        id: docRef.id,
+        courseId: discussionData.courseId || 'none',
+        organizationId: discussionData.organizationId || 'none',
+        isPrivate: discussionData.isPrivate,
+        title: discussionData.title.substring(0, 50),
       });
+      
       return docRef.id;
     } catch (error) {
       console.error('Error creating discussion:', error);
@@ -97,53 +135,108 @@ export class DatabaseService {
     try {
       const constraints: QueryConstraint[] = [];
 
-      if (filters?.courseId) {
-        constraints.push(where('courseId', '==', filters.courseId));
+      // Normalize filters to ensure consistent matching (trim whitespace)
+      if (filters?.courseId && typeof filters.courseId === 'string' && filters.courseId.trim()) {
+        constraints.push(where('courseId', '==', filters.courseId.trim()));
       }
-      if (filters?.professorId) {
-        constraints.push(where('professorId', '==', filters.professorId));
+      if (filters?.professorId && typeof filters.professorId === 'string' && filters.professorId.trim()) {
+        constraints.push(where('professorId', '==', filters.professorId.trim()));
       }
-      if (filters?.clubId) {
-        constraints.push(where('clubId', '==', filters.clubId));
+      if (filters?.clubId && typeof filters.clubId === 'string' && filters.clubId.trim()) {
+        constraints.push(where('clubId', '==', filters.clubId.trim()));
       }
-      if (filters?.organizationId) {
-        constraints.push(where('organizationId', '==', filters.organizationId));
+      if (filters?.organizationId && typeof filters.organizationId === 'string' && filters.organizationId.trim()) {
+        constraints.push(where('organizationId', '==', filters.organizationId.trim()));
       }
-      if (filters?.userId) {
-        constraints.push(where('userId', '==', filters.userId));
+      if (filters?.userId && typeof filters.userId === 'string' && filters.userId.trim()) {
+        constraints.push(where('userId', '==', filters.userId.trim()));
       }
       if (filters?.isPrivate !== undefined) {
         constraints.push(where('isPrivate', '==', filters.isPrivate));
       }
 
-      // Note: Sorting by score/controversy requires those fields to exist in Firestore
-      // If they don't exist, we'll sort client-side after fetching
+      // Check if we have any filters (not just constraints, since orderBy adds constraints)
+      const hasFilters = filters && (
+        filters.courseId || 
+        filters.professorId || 
+        filters.clubId || 
+        filters.organizationId || 
+        filters.userId || 
+        filters.isPrivate !== undefined ||
+        (filters.tags && filters.tags.length > 0)
+      );
+
+      // Note: Sorting requires composite indexes when filtering by courseId/organizationId
+      // To avoid index issues, we'll sort client-side when filtering
+      // When filtering by courseId/organizationId (with or without isPrivate), we cannot use orderBy without a composite index
       let needsClientSort = false;
-      switch (sortBy) {
-        case 'popularity':
-          // Try to sort by score, but fallback to client-side if not available
-          try {
-            constraints.push(orderBy('score', 'desc'));
-          } catch {
-            needsClientSort = true;
-          }
-          break;
-        case 'controversy':
-          try {
-            constraints.push(orderBy('controversy', 'desc'));
-          } catch {
-            needsClientSort = true;
-          }
-          break;
-        case 'recent':
-          constraints.push(orderBy('createdAt', 'desc'));
-          break;
+      
+      // Check if we're filtering by courseId or organizationId
+      const isFilteringByCourseOrOrg = !!(filters?.courseId || filters?.organizationId);
+      
+      if (isFilteringByCourseOrOrg) {
+        // When filtering by courseId or organizationId (with or without isPrivate), sort client-side to avoid composite index
+        // Do NOT add orderBy here - it requires a composite index
+        needsClientSort = true;
+        // IMPORTANT: Do not add any orderBy constraints when filtering by courseId/organizationId
+      } else {
+        // No courseId/organizationId filter - try server-side sorting
+        switch (sortBy) {
+          case 'popularity':
+            // Try to sort by score, but fallback to client-side if not available
+            try {
+              constraints.push(orderBy('score', 'desc'));
+            } catch {
+              needsClientSort = true;
+            }
+            break;
+          case 'controversy':
+            try {
+              constraints.push(orderBy('controversy', 'desc'));
+            } catch {
+              needsClientSort = true;
+            }
+            break;
+          case 'recent':
+            constraints.push(orderBy('createdAt', 'desc'));
+            break;
+        }
       }
 
-      constraints.push(limit(limitCount));
+      // Always add a limit, but use a higher limit when no filters (for bulletin/cross-posting)
+      // When no filters are provided, we want all discussions for cross-posting
+      const actualLimit = hasFilters ? limitCount : Math.max(limitCount, 500);
+      constraints.push(limit(actualLimit));
 
       const q = query(collection(db, 'discussions'), ...constraints);
-      const querySnapshot = await getDocs(q);
+      
+      // Log query details for debugging
+      const hasCourseOrOrgFilter = !!(filters?.courseId || filters?.organizationId);
+      console.log('Querying discussions:', {
+        filters: {
+          courseId: filters?.courseId,
+          organizationId: filters?.organizationId,
+          isPrivate: filters?.isPrivate,
+        },
+        hasCourseOrOrgFilter,
+        sortBy,
+        needsClientSort,
+        constraintsCount: constraints.length,
+        willUseOrderBy: !hasCourseOrOrgFilter, // Should be false when filtering by courseId/orgId
+      });
+      
+      let querySnapshot;
+      try {
+        querySnapshot = await getDocs(q);
+      } catch (error: any) {
+        console.error('Error executing query:', error);
+        // If it's an index error, return empty array and log
+        if (error.code === 'failed-precondition' && error.message?.includes('index')) {
+          console.warn('Query requires index. Returning empty array. Please create the index:', error.message);
+          return [];
+        }
+        throw error;
+      }
       
       let discussions = querySnapshot.docs.map(doc => {
         const data = doc.data();
@@ -174,21 +267,42 @@ export class DatabaseService {
 
         return {
           id: doc.id,
-          ...data,
+          userId: data.userId || '',
+          title: data.title || '',
+          content: data.content || '',
+          tags: data.tags || [],
+          upvotes: data.upvotes || [],
+          downvotes: data.downvotes || [],
+          comments: data.comments || [],
+          score: data.score || 0,
+          controversy: data.controversy || 0,
           createdAt,
           updatedAt,
+          // Optional fields - only include if they exist
+          images: data.images || undefined,
+          courseId: data.courseId || undefined,
+          organizationId: data.organizationId || undefined,
+          professorId: data.professorId || undefined,
+          clubId: data.clubId || undefined,
+          isPrivate: data.isPrivate || false,
+          enrolledUsers: data.enrolledUsers || undefined,
         } as Discussion;
       });
 
-      // Client-side sorting if needed
-      if (needsClientSort && sortBy === 'popularity') {
-        discussions.sort((a, b) => {
-          const aScore = (a.score || 0) + (a.upvotes?.length || 0) - (a.downvotes?.length || 0);
-          const bScore = (b.score || 0) + (b.upvotes?.length || 0) - (b.downvotes?.length || 0);
-          return bScore - aScore;
-        });
-      } else if (needsClientSort && sortBy === 'controversy') {
-        discussions.sort((a, b) => (b.controversy || 0) - (a.controversy || 0));
+      // Client-side sorting if needed (when filtering by courseId/organizationId or when server-side sort fails)
+      if (needsClientSort) {
+        if (sortBy === 'popularity') {
+          discussions.sort((a, b) => {
+            const aScore = (a.score || 0) + (a.upvotes?.length || 0) - (a.downvotes?.length || 0);
+            const bScore = (b.score || 0) + (b.upvotes?.length || 0) - (b.downvotes?.length || 0);
+            return bScore - aScore;
+          });
+        } else if (sortBy === 'controversy') {
+          discussions.sort((a, b) => (b.controversy || 0) - (a.controversy || 0));
+        } else if (sortBy === 'recent') {
+          // Already sorted by createdAt from server, but ensure it's correct
+          discussions.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+        }
       }
 
       return discussions;

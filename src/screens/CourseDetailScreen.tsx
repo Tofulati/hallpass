@@ -8,6 +8,8 @@ import {
   FlatList,
   RefreshControl,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
+import { useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { DatabaseService } from '../services/databaseService';
@@ -47,6 +49,19 @@ export default function CourseDetailScreen({ route, navigation }: any) {
       }
     }
   }, [course, isEnrolled]);
+
+  // Reload discussions when screen comes into focus (e.g., after creating a discussion)
+  useFocusEffect(
+    useCallback(() => {
+      if (courseId && course) {
+        loadDiscussions();
+        if (isEnrolled) {
+          loadPrivateDiscussions();
+        }
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [courseId, course, isEnrolled])
+  );
 
   const loadCourse = async () => {
     try {
@@ -142,11 +157,65 @@ export default function CourseDetailScreen({ route, navigation }: any) {
     
     setLoadingDiscussions(true);
     try {
-      const allDiscussions = await DatabaseService.getDiscussions(
-        { courseId },
+      // Normalize courseId before querying (trim to ensure consistency)
+      const normalizedCourseId = courseId.trim();
+      
+      // Load course-specific discussions (both public and private if enrolled)
+      const courseDiscussions = await DatabaseService.getDiscussions(
+        { courseId: normalizedCourseId },
         'popularity',
-        50
+        100
       );
+      
+      console.log('Loaded course discussions for', normalizedCourseId, ':', {
+        count: courseDiscussions.length,
+        discussions: courseDiscussions.map(d => ({
+          id: d.id,
+          title: d.title.substring(0, 30),
+          courseId: d.courseId,
+          isPrivate: d.isPrivate,
+        })),
+      });
+      
+      // Filter to only show public discussions, or private if user is enrolled
+      const userCourseIds = userData?.courses ? 
+        (userData.courses as any[]).map((c: any) => typeof c === 'string' ? c.trim() : c.id?.trim()).filter((id: any): id is string => !!id) : [];
+      
+      const visibleCourseDiscussions = courseDiscussions.filter(d => {
+        // Normalize courseId comparison (handle string trimming and empty strings)
+        if (!d.courseId || typeof d.courseId !== 'string') {
+          return false; // Skip discussions without courseId
+        }
+        const dCourseId = d.courseId.trim();
+        const matches = dCourseId === normalizedCourseId;
+        
+        if (d.isPrivate) {
+          return matches && userCourseIds.includes(normalizedCourseId);
+        }
+        return matches;
+      });
+      
+      // Load all discussions and filter for general ones (no courseId and no organizationId)
+      const allDiscussionsRaw = await DatabaseService.getDiscussions(
+        {},
+        'popularity',
+        200
+      );
+      
+      // Filter general discussions (no courseId, no organizationId)
+      // Handle both undefined, null, and empty string cases
+      const generalDiscussions = allDiscussionsRaw.filter(d => {
+        const hasCourseId = d.courseId && typeof d.courseId === 'string' && d.courseId.trim() !== '';
+        const hasOrganizationId = d.organizationId && typeof d.organizationId === 'string' && d.organizationId.trim() !== '';
+        return !hasCourseId && !hasOrganizationId && !d.isPrivate; // General discussions are never private
+      });
+      
+      // Combine course and general discussions, removing duplicates
+      const allDiscussionsMap = new Map<string, Discussion>();
+      [...visibleCourseDiscussions, ...generalDiscussions].forEach(d => {
+        allDiscussionsMap.set(d.id, d);
+      });
+      const allDiscussions = Array.from(allDiscussionsMap.values());
       
       // Apply ML ranking
       const rankedDiscussions = allDiscussions.map(discussion => {
@@ -178,14 +247,18 @@ export default function CourseDetailScreen({ route, navigation }: any) {
     if (!courseId || !isEnrolled) return;
     
     try {
-      const allDiscussions = await DatabaseService.getDiscussions(
-        { courseId, isPrivate: true },
+      // Normalize courseId before querying (trim to ensure consistency)
+      const normalizedCourseId = courseId.trim();
+      
+      // Load private course discussions
+      const privateCourseDiscussions = await DatabaseService.getDiscussions(
+        { courseId: normalizedCourseId, isPrivate: true },
         'popularity',
-        50
+        100
       );
       
       // Apply ML ranking
-      const rankedDiscussions = allDiscussions.map(discussion => {
+      const rankedDiscussions = privateCourseDiscussions.map(discussion => {
         const rankingInput = {
           upvotes: discussion.upvotes.length,
           downvotes: discussion.downvotes.length,

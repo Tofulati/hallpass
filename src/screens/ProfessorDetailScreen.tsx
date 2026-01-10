@@ -235,13 +235,16 @@ export default function ProfessorDetailScreen({ route, navigation }: any) {
 
         {/* Ratings Overview */}
         <View style={[styles.ratingsOverview, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
-          <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>Overall Ratings</Text>
-          
-          <View style={styles.ratingRow}>
-            <Text style={[styles.ratingLabel, { color: theme.colors.textSecondary }]}>Overall</Text>
-            <Text style={[styles.ratingValue, { color: getRatingColor(avgRating.totalRating) }]}>
-              {avgRating.totalRating.toFixed(1)}/5
-            </Text>
+          <View style={styles.overallRatingHeader}>
+            <Text style={[styles.sectionTitle, styles.sectionTitleInline, { color: theme.colors.text }]}>Overall Ratings</Text>
+            <View style={[
+              styles.overallRatingBox,
+              { backgroundColor: getRatingColor(avgRating.totalRating) }
+            ]}>
+              <Text style={styles.overallRatingText}>
+                {avgRating.totalRating.toFixed(1)}/5
+              </Text>
+            </View>
           </View>
           
           <View style={styles.ratingRow}>
@@ -373,6 +376,28 @@ const createStyles = (theme: any) =>
       fontSize: 18,
       fontWeight: '600',
       marginBottom: 16,
+    },
+    sectionTitleInline: {
+      marginBottom: 0,
+    },
+    overallRatingHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 16,
+    },
+    overallRatingBox: {
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 8,
+      minWidth: 60,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    overallRatingText: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: '#FFFFFF',
     },
     ratingRow: {
       flexDirection: 'row',

@@ -17,6 +17,7 @@ export default function DiscussionCard({ discussion, navigation }: DiscussionCar
   const { theme } = useTheme();
   const [upvoted, setUpvoted] = useState(false);
   const [downvoted, setDownvoted] = useState(false);
+  const [associationName, setAssociationName] = useState<string | null>(null);
 
   useEffect(() => {
     if (user) {
@@ -25,30 +26,68 @@ export default function DiscussionCard({ discussion, navigation }: DiscussionCar
     }
   }, [discussion, user]);
 
+  useEffect(() => {
+    // Reset association name when discussion changes
+    setAssociationName(null);
+    
+    const loadAssociationName = async () => {
+      if (discussion.courseId && discussion.courseId.trim()) {
+        try {
+          const course = await DatabaseService.getCourse(discussion.courseId.trim());
+          if (course) {
+            setAssociationName(`${course.code} - ${course.name}`);
+          }
+        } catch (error) {
+          console.error('Error loading course name:', error);
+        }
+      } else if (discussion.organizationId && discussion.organizationId.trim()) {
+        try {
+          const org = await DatabaseService.getOrganization(discussion.organizationId.trim());
+          if (org) {
+            setAssociationName(org.name);
+          }
+        } catch (error) {
+          console.error('Error loading organization name:', error);
+        }
+      }
+    };
+
+    loadAssociationName();
+  }, [discussion.courseId, discussion.organizationId]);
+
   const handleVote = async (type: 'upvote' | 'downvote') => {
     if (!user) return;
 
     const currentUpvoted = discussion.upvotes.includes(user.uid);
     const currentDownvoted = discussion.downvotes.includes(user.uid);
 
+    // Determine the vote type to send (remove if already voted, otherwise toggle)
+    let voteType: 'upvote' | 'downvote' | 'remove' = type;
+    
     if (type === 'upvote') {
       if (currentUpvoted) {
-        await DatabaseService.voteDiscussion(discussion.id, user.uid, 'remove');
+        voteType = 'remove';
       } else {
-        await DatabaseService.voteDiscussion(discussion.id, user.uid, 'upvote');
-        if (currentDownvoted) {
-          await DatabaseService.voteDiscussion(discussion.id, user.uid, 'remove');
-        }
+        voteType = 'upvote'; // This will automatically remove downvote if exists
       }
     } else {
       if (currentDownvoted) {
-        await DatabaseService.voteDiscussion(discussion.id, user.uid, 'remove');
+        voteType = 'remove';
       } else {
-        await DatabaseService.voteDiscussion(discussion.id, user.uid, 'downvote');
-        if (currentUpvoted) {
-          await DatabaseService.voteDiscussion(discussion.id, user.uid, 'remove');
-        }
+        voteType = 'downvote'; // This will automatically remove upvote if exists
       }
+    }
+
+    try {
+      await DatabaseService.voteDiscussion(discussion.id, user.uid, voteType);
+      // Update local state optimistically
+      setUpvoted(voteType === 'upvote');
+      setDownvoted(voteType === 'downvote');
+    } catch (error) {
+      console.error('Error voting on discussion:', error);
+      // Revert optimistic update on error
+      setUpvoted(currentUpvoted);
+      setDownvoted(currentDownvoted);
     }
   };
 
@@ -62,6 +101,19 @@ export default function DiscussionCard({ discussion, navigation }: DiscussionCar
     >
       <View style={styles.header}>
         <Text style={styles.title}>{discussion.title}</Text>
+        {associationName && (
+          <View style={styles.associationBadge}>
+            <Ionicons 
+              name={discussion.courseId ? "school-outline" : "people-outline"} 
+              size={12} 
+              color={theme.colors.primary} 
+              style={styles.associationIcon}
+            />
+            <Text style={[styles.associationText, { color: theme.colors.primary }]}>
+              {associationName}
+            </Text>
+          </View>
+        )}
         {discussion.tags.length > 0 && (
           <View style={styles.tagsContainer}>
             {discussion.tags.slice(0, 3).map((tag, index) => (
@@ -84,18 +136,24 @@ export default function DiscussionCard({ discussion, navigation }: DiscussionCar
       <View style={styles.footer}>
         <View style={styles.voteContainer}>
           <TouchableOpacity
-            style={[styles.voteButton, upvoted && styles.voteButtonActive]}
+            style={[styles.voteButton, upvoted && styles.voteButtonActive, upvoted && { backgroundColor: theme.colors.upvote + '20' }]}
             onPress={() => handleVote('upvote')}
+            activeOpacity={0.7}
           >
-            <Ionicons
-              name="arrow-up"
-              size={20}
-              color={upvoted ? theme.colors.upvote : theme.colors.textSecondary}
-            />
+            <Text
+              style={[
+                styles.voteLetter,
+                upvoted && { color: theme.colors.upvote, fontWeight: 'bold' },
+                !upvoted && { color: theme.colors.textSecondary },
+              ]}
+            >
+              A
+            </Text>
             <Text
               style={[
                 styles.voteCount,
                 upvoted && { color: theme.colors.upvote },
+                !upvoted && { color: theme.colors.textSecondary },
               ]}
             >
               {discussion.upvotes.length}
@@ -103,18 +161,24 @@ export default function DiscussionCard({ discussion, navigation }: DiscussionCar
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.voteButton, downvoted && styles.voteButtonActive]}
+            style={[styles.voteButton, downvoted && styles.voteButtonActive, downvoted && { backgroundColor: theme.colors.downvote + '20' }]}
             onPress={() => handleVote('downvote')}
+            activeOpacity={0.7}
           >
-            <Ionicons
-              name="arrow-down"
-              size={20}
-              color={downvoted ? theme.colors.downvote : theme.colors.textSecondary}
-            />
+            <Text
+              style={[
+                styles.voteLetter,
+                downvoted && { color: theme.colors.downvote, fontWeight: 'bold' },
+                !downvoted && { color: theme.colors.textSecondary },
+              ]}
+            >
+              F
+            </Text>
             <Text
               style={[
                 styles.voteCount,
                 downvoted && { color: theme.colors.downvote },
+                !downvoted && { color: theme.colors.textSecondary },
               ]}
             >
               {discussion.downvotes.length}
@@ -153,6 +217,23 @@ const createStyles = (theme: any) =>
       fontWeight: '600',
       color: theme.colors.text,
       marginBottom: 8,
+    },
+    associationBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      alignSelf: 'flex-start',
+      backgroundColor: theme.colors.primary + '15',
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 6,
+      marginBottom: 8,
+    },
+    associationIcon: {
+      marginRight: 4,
+    },
+    associationText: {
+      fontSize: 12,
+      fontWeight: '500',
     },
     tagsContainer: {
       flexDirection: 'row',
@@ -198,18 +279,23 @@ const createStyles = (theme: any) =>
       flexDirection: 'row',
       alignItems: 'center',
       paddingHorizontal: 12,
-      paddingVertical: 6,
+      paddingVertical: 8,
       borderRadius: 8,
       marginRight: 8,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
     },
     voteButtonActive: {
-      backgroundColor: theme.colors.surface,
+      borderWidth: 2,
+    },
+    voteLetter: {
+      fontSize: 18,
+      fontWeight: '600',
+      marginRight: 6,
     },
     voteCount: {
-      marginLeft: 4,
       fontSize: 14,
       fontWeight: '600',
-      color: theme.colors.textSecondary,
     },
     metaContainer: {
       flexDirection: 'row',
