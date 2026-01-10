@@ -117,7 +117,9 @@ export default function ClubDetailScreen({ route, navigation }: any) {
 
     setLoadingMembers(true);
     try {
-      const memberPromises = organization.members.map(memberId => 
+      // Filter out invalid member IDs before fetching
+      const validMemberIds = organization.members.filter(id => id && typeof id === 'string' && id.trim() !== '');
+      const memberPromises = validMemberIds.map(memberId => 
         DatabaseService.getUser(memberId)
       );
       const memberResults = await Promise.all(memberPromises);
@@ -540,6 +542,7 @@ const createStyles = (theme: any) =>
       color: theme.colors.text,
       marginTop: 12,
       fontWeight: '600',
+      textAlign: 'center',
     },
     emptySubtext: {
       fontSize: 14,

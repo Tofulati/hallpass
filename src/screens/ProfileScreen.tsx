@@ -328,7 +328,9 @@ export default function ProfileScreen({ route, navigation }: any) {
                 ))}
               </View>
             ) : (
-              <Text style={styles.emptyText}>No courses yet</Text>
+              <View style={styles.emptyContainer}>
+                <Text style={styles.emptyText}>No courses yet</Text>
+              </View>
             )}
           </View>
         )}
@@ -380,7 +382,9 @@ export default function ProfileScreen({ route, navigation }: any) {
                 ))}
               </View>
             ) : (
-              <Text style={styles.emptyText}>No clubs yet</Text>
+              <View style={styles.emptyContainer}>
+                <Text style={styles.emptyText}>No clubs yet</Text>
+              </View>
             )}
           </View>
         )}
@@ -637,10 +641,17 @@ const createStyles = (theme: any, university?: University | null) =>
       padding: 20,
       gap: 8,
     },
+    emptyContainer: {
+      padding: 32,
+      alignItems: 'center',
+      justifyContent: 'center',
+      minHeight: 100,
+    },
     emptyText: {
       fontSize: 14,
       color: theme.colors.textSecondary,
       fontStyle: 'italic',
+      textAlign: 'center',
     },
     privateContainer: {
       alignItems: 'center',

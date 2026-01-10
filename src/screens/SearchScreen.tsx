@@ -11,18 +11,19 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { DatabaseService } from '../services/databaseService';
-import { User, Course, Organization } from '../types';
+import { User, Course, Organization, Professor } from '../types';
 import { Ionicons } from '@expo/vector-icons';
 
 type SearchResult = {
-  type: 'user' | 'course' | 'organization';
-  data: User | Course | Organization;
+  type: 'user' | 'course' | 'organization' | 'professor';
+  data: User | Course | Organization | Professor;
 };
 
 type SearchResultsByCategory = {
   users: User[];
   courses: Course[];
   organizations: Organization[];
+  professors: Professor[];
 };
 
 export default function SearchScreen({ navigation }: any) {
@@ -33,21 +34,38 @@ export default function SearchScreen({ navigation }: any) {
     users: [],
     courses: [],
     organizations: [],
+    professors: [],
   });
   const [searching, setSearching] = useState(false);
+  const [collapsedSections, setCollapsedSections] = useState<{
+    users: boolean;
+    courses: boolean;
+    organizations: boolean;
+    professors: boolean;
+  }>({
+    users: true,
+    courses: true,
+    organizations: true,
+    professors: true,
+  });
 
   const handleSearch = async () => {
     if (!searchQuery.trim() || !userData?.university) {
-      setResults({ users: [], courses: [], organizations: [] });
+      setResults({ users: [], courses: [], organizations: [], professors: [] });
       return;
     }
 
     setSearching(true);
     try {
-      const [users, courses, organizations] = await Promise.all([
-        DatabaseService.searchUsers(searchQuery, userData.university),
-        DatabaseService.getCourses(userData.university),
-        DatabaseService.getOrganizations(userData.university),
+      const universityId = typeof userData.university === 'string' 
+        ? userData.university 
+        : userData.university.id;
+
+      const [users, courses, organizations, professors] = await Promise.all([
+        DatabaseService.searchUsers(searchQuery, universityId),
+        DatabaseService.getCourses(universityId),
+        DatabaseService.getOrganizations(universityId),
+        DatabaseService.getProfessors(universityId, searchQuery),
       ]);
 
       const filteredCourses = courses.filter(
@@ -66,10 +84,11 @@ export default function SearchScreen({ navigation }: any) {
         users,
         courses: filteredCourses,
         organizations: filteredOrganizations,
+        professors,
       });
     } catch (error) {
       console.error('Error searching:', error);
-      setResults({ users: [], courses: [], organizations: [] });
+      setResults({ users: [], courses: [], organizations: [], professors: [] });
     } finally {
       setSearching(false);
     }
@@ -123,7 +142,37 @@ export default function SearchScreen({ navigation }: any) {
     </TouchableOpacity>
   );
 
-  const hasResults = results.users.length > 0 || results.courses.length > 0 || results.organizations.length > 0;
+  const renderProfessor = (professor: Professor) => (
+    <TouchableOpacity
+      key={professor.id}
+      style={styles.resultCard}
+      onPress={() => navigation.navigate('ProfessorDetail', { professorId: professor.id })}
+    >
+      <Ionicons name="school" size={40} color={theme.colors.primary} />
+      <View style={styles.resultContent}>
+        <Text style={styles.resultTitle}>{professor.name}</Text>
+        {professor.email && (
+          <Text style={styles.resultSubtitle} numberOfLines={1}>
+            {professor.email}
+          </Text>
+        )}
+        {professor.averageRating.totalRating > 0 && (
+          <Text style={styles.resultSubtitle} numberOfLines={1}>
+            Rating: {professor.averageRating.totalRating.toFixed(1)}/5
+          </Text>
+        )}
+      </View>
+    </TouchableOpacity>
+  );
+
+  const toggleSection = (section: 'users' | 'courses' | 'organizations' | 'professors') => {
+    setCollapsedSections(prev => ({
+      ...prev,
+      [section]: !prev[section],
+    }));
+  };
+
+  const hasResults = results.users.length > 0 || results.courses.length > 0 || results.organizations.length > 0 || results.professors.length > 0;
 
   const styles = createStyles(theme);
 
@@ -134,7 +183,7 @@ export default function SearchScreen({ navigation }: any) {
         <Ionicons name="search" size={20} color={theme.colors.textSecondary} style={styles.searchIcon} />
         <TextInput
           style={styles.searchInput}
-          placeholder="Search users, courses, organizations..."
+          placeholder="Search users, courses, organizations, professors..."
           placeholderTextColor={theme.colors.textSecondary}
           value={searchQuery}
           onChangeText={setSearchQuery}
@@ -159,24 +208,92 @@ export default function SearchScreen({ navigation }: any) {
           {/* Users Section */}
           {results.users.length > 0 && (
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Users ({results.users.length})</Text>
-              {results.users.map(renderUser)}
+              <TouchableOpacity 
+                style={styles.sectionHeader}
+                onPress={() => toggleSection('users')}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.sectionTitle}>Users ({results.users.length})</Text>
+                <Ionicons 
+                  name={collapsedSections.users ? 'chevron-down' : 'chevron-up'} 
+                  size={20} 
+                  color={theme.colors.textSecondary} 
+                />
+              </TouchableOpacity>
+              {!collapsedSections.users && (
+                <View style={styles.sectionContent}>
+                  {results.users.map(renderUser)}
+                </View>
+              )}
+            </View>
+          )}
+
+          {/* Professors Section */}
+          {results.professors.length > 0 && (
+            <View style={styles.section}>
+              <TouchableOpacity 
+                style={styles.sectionHeader}
+                onPress={() => toggleSection('professors')}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.sectionTitle}>Professors ({results.professors.length})</Text>
+                <Ionicons 
+                  name={collapsedSections.professors ? 'chevron-down' : 'chevron-up'} 
+                  size={20} 
+                  color={theme.colors.textSecondary} 
+                />
+              </TouchableOpacity>
+              {!collapsedSections.professors && (
+                <View style={styles.sectionContent}>
+                  {results.professors.map(renderProfessor)}
+                </View>
+              )}
             </View>
           )}
 
           {/* Courses Section */}
           {results.courses.length > 0 && (
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Courses ({results.courses.length})</Text>
-              {results.courses.map(renderCourse)}
+              <TouchableOpacity 
+                style={styles.sectionHeader}
+                onPress={() => toggleSection('courses')}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.sectionTitle}>Courses ({results.courses.length})</Text>
+                <Ionicons 
+                  name={collapsedSections.courses ? 'chevron-down' : 'chevron-up'} 
+                  size={20} 
+                  color={theme.colors.textSecondary} 
+                />
+              </TouchableOpacity>
+              {!collapsedSections.courses && (
+                <View style={styles.sectionContent}>
+                  {results.courses.map(renderCourse)}
+                </View>
+              )}
             </View>
           )}
 
           {/* Organizations Section */}
           {results.organizations.length > 0 && (
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Organizations ({results.organizations.length})</Text>
-              {results.organizations.map(renderOrganization)}
+              <TouchableOpacity 
+                style={styles.sectionHeader}
+                onPress={() => toggleSection('organizations')}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.sectionTitle}>Organizations ({results.organizations.length})</Text>
+                <Ionicons 
+                  name={collapsedSections.organizations ? 'chevron-down' : 'chevron-up'} 
+                  size={20} 
+                  color={theme.colors.textSecondary} 
+                />
+              </TouchableOpacity>
+              {!collapsedSections.organizations && (
+                <View style={styles.sectionContent}>
+                  {results.organizations.map(renderOrganization)}
+                </View>
+              )}
             </View>
           )}
         </ScrollView>
@@ -189,7 +306,7 @@ export default function SearchScreen({ navigation }: any) {
       ) : (
         <View style={styles.emptyContainer}>
           <Ionicons name="search-outline" size={64} color={theme.colors.textSecondary} />
-          <Text style={styles.emptyText}>Search for users, courses, or organizations</Text>
+          <Text style={styles.emptyText}>Search for users, courses, organizations, or professors</Text>
         </View>
       )}
     </SafeAreaView>
@@ -225,14 +342,24 @@ const createStyles = (theme: any) =>
       padding: 16,
     },
     section: {
-      marginBottom: 32,
+      marginBottom: 24,
+    },
+    sectionHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingVertical: 8,
+      paddingHorizontal: 4,
+      marginBottom: 12,
     },
     sectionTitle: {
       fontSize: 18,
       fontWeight: '600',
       color: theme.colors.text,
-      marginBottom: 12,
-      paddingHorizontal: 4,
+      flex: 1,
+    },
+    sectionContent: {
+      marginTop: 4,
     },
     resultCard: {
       flexDirection: 'row',

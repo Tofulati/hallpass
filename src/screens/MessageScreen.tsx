@@ -226,6 +226,7 @@ const createStyles = (theme: any) =>
       fontWeight: '600',
       color: theme.colors.text,
       marginTop: 16,
+      textAlign: 'center',
     },
     emptySubtext: {
       fontSize: 14,

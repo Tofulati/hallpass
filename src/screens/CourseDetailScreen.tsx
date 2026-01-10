@@ -54,9 +54,8 @@ export default function CourseDetailScreen({ route, navigation }: any) {
       setCourse(courseData);
       
       if (courseData) {
-        // Professors are already loaded as Professor[] objects in getCourse
-        // No need to fetch them separately
-        setProfessors(courseData.professors || []);
+        // Load actual professor data with real ratings
+        await loadProfessors(courseData.professors || []);
       }
 
       // Check if enrolled
@@ -68,6 +67,52 @@ export default function CourseDetailScreen({ route, navigation }: any) {
     }
   };
 
+  const loadProfessors = async (professorsFromCourse: Professor[]) => {
+    if (!userData?.university || professorsFromCourse.length === 0) {
+      setProfessors(professorsFromCourse);
+      return;
+    }
+
+    try {
+      const universityId = typeof userData.university === 'string' 
+        ? userData.university 
+        : userData.university.id;
+
+      // Fetch actual professor data with real ratings
+      const professorPromises = professorsFromCourse.map(async (prof) => {
+        try {
+          // Get or create professor to get the actual ID
+          const professorId = await DatabaseService.getOrCreateProfessor(
+            prof.name,
+            universityId,
+            prof.email
+          );
+          
+          // Fetch actual professor data with calculated ratings
+          const actualProfessor = await DatabaseService.getProfessor(professorId);
+          
+          if (actualProfessor) {
+            return actualProfessor;
+          }
+          
+          // Fallback to course professor data if actual professor not found
+          return prof;
+        } catch (error) {
+          console.error(`Error loading professor ${prof.name}:`, error);
+          // Fallback to course professor data on error
+          return prof;
+        }
+      });
+
+      const actualProfessors = await Promise.all(professorPromises);
+      setProfessors(actualProfessors.filter((p): p is Professor => p !== null));
+    } catch (error) {
+      console.error('Error loading professors:', error);
+      // Fallback to course professors on error
+      setProfessors(professorsFromCourse);
+    }
+  };
+
   const loadMembers = async () => {
     if (!course?.members || course.members.length === 0) {
       setMembers([]);
@@ -76,7 +121,9 @@ export default function CourseDetailScreen({ route, navigation }: any) {
 
     setLoadingMembers(true);
     try {
-      const memberPromises = course.members.map(memberId => 
+      // Filter out invalid member IDs before fetching
+      const validMemberIds = course.members.filter(id => id && typeof id === 'string' && id.trim() !== '');
+      const memberPromises = validMemberIds.map(memberId => 
         DatabaseService.getUser(memberId)
       );
       const memberResults = await Promise.all(memberPromises);
@@ -327,27 +374,57 @@ export default function CourseDetailScreen({ route, navigation }: any) {
 
         {activeTab === 'professors' && (
           <View style={styles.tabContentInner}>
+            <TouchableOpacity
+              style={styles.addDiscussionButton}
+              onPress={() => navigation.navigate('RequestProfessor', { courseId: course.id })}
+            >
+              <Ionicons name="add-circle" size={24} color={theme.colors.primary} />
+              <Text style={styles.addDiscussionButtonText}>Request Add Professor</Text>
+            </TouchableOpacity>
             {professors.length > 0 ? (
-              professors.map(prof => (
-                <TouchableOpacity
-                  key={prof.id}
-                  style={styles.professorCard}
-                  onPress={() => navigation.navigate('ProfessorDetail', { professorId: prof.id })}
-                >
-                  <Text style={styles.professorName}>{prof.name}</Text>
-                  <View style={styles.professorRightSection}>
-                    {prof.averageRating && (
-                      <View style={styles.ratingContainer}>
-                        <Ionicons name="star" size={16} color={theme.colors.upvote} />
-                        <Text style={styles.ratingText}>
-                          {((prof.averageRating.enjoyment + prof.averageRating.communication) / 2).toFixed(1)}
-                        </Text>
-                      </View>
-                    )}
-                    <Ionicons name="chevron-forward" size={20} color={theme.colors.textSecondary} style={styles.chevronIcon} />
-                  </View>
-                </TouchableOpacity>
-              ))
+              professors.map((prof) => {
+                const handleProfessorPress = async () => {
+                  try {
+                    // Get or create professor document
+                    if (!userData?.university) return;
+                    
+                    const universityId = typeof userData.university === 'string' 
+                      ? userData.university 
+                      : userData.university.id;
+                    
+                    const professorId = await DatabaseService.getOrCreateProfessor(
+                      prof.name,
+                      universityId,
+                      prof.email
+                    );
+                    
+                    navigation.navigate('ProfessorDetail', { professorId });
+                  } catch (error) {
+                    console.error('Error navigating to professor:', error);
+                  }
+                };
+
+                return (
+                  <TouchableOpacity
+                    key={prof.id}
+                    style={styles.professorCard}
+                    onPress={handleProfessorPress}
+                  >
+                    <Text style={styles.professorName}>{prof.name}</Text>
+                    <View style={styles.professorRightSection}>
+                      {prof.averageRating && prof.averageRating.totalRating !== undefined && prof.averageRating.totalRating !== null && prof.averageRating.totalRating > 0 && (
+                        <View style={styles.ratingContainer}>
+                          <Ionicons name="star" size={16} color={theme.colors.upvote} />
+                          <Text style={styles.ratingText}>
+                            {prof.averageRating.totalRating.toFixed(1)}/5
+                          </Text>
+                        </View>
+                      )}
+                      <Ionicons name="chevron-forward" size={20} color={theme.colors.textSecondary} style={styles.chevronIcon} />
+                    </View>
+                  </TouchableOpacity>
+                );
+              })
             ) : (
               <View style={styles.emptyContainer}>
                 <Ionicons name="school-outline" size={64} color={theme.colors.textSecondary} />
@@ -558,6 +635,7 @@ const createStyles = (theme: any) =>
       color: theme.colors.text,
       marginTop: 12,
       fontWeight: '600',
+      textAlign: 'center',
     },
     emptySubtext: {
       fontSize: 14,

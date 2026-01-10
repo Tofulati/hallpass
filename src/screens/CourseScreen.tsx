@@ -263,9 +263,12 @@ const createStyles = (theme: any) =>
     emptyContainer: {
       padding: 32,
       alignItems: 'center',
+      justifyContent: 'center',
+      minHeight: 200,
     },
     emptyText: {
       fontSize: 16,
       color: theme.colors.textSecondary,
+      textAlign: 'center',
     },
   });

@@ -43,23 +43,32 @@ export interface Professor {
   id: string;
   name: string;
   email?: string;
+  image?: string;
   courses: string[]; // Course IDs
+  universityId?: string;
   ratings: ProfessorRating[];
   averageRating: {
-    hardness: number;
-    coursework: number;
-    communication: number;
-    enjoyment: number;
+    totalRating: number; // 1-5
+    difficulty: number; // 1-5
+    enjoyment: number; // 1-5
+    retakePercentage: number; // 0-100
+    understandability: number; // 1-5
   };
 }
 
 export interface ProfessorRating {
-  userId: string;
+  id: string;
+  userId?: string; // Optional if anonymous
   courseId: string;
-  hardness: number;
-  coursework: number;
-  communication: number;
-  enjoyment: number;
+  totalRating: number; // 1-5
+  difficulty: number; // 1-5
+  enjoyment: number; // 1-5
+  retake: boolean; // Would retake this professor
+  understandability: number; // 1-5
+  text?: string; // Review text
+  anonymous: boolean;
+  upvotes: string[]; // User IDs who upvoted (A)
+  downvotes: string[]; // User IDs who downvoted (F)
   createdAt: Date;
 }
 

@@ -37,7 +37,13 @@ export class DatabaseService {
   // User Operations
   static async getUser(userId: string): Promise<User | null> {
     try {
-      const userDoc = await getDoc(doc(db, 'users', userId));
+      // Validate userId before attempting to fetch
+      if (!userId || typeof userId !== 'string' || userId.trim() === '') {
+        console.error('Invalid userId provided to getUser:', userId);
+        return null;
+      }
+      
+      const userDoc = await getDoc(doc(db, 'users', userId.trim()));
       if (!userDoc.exists()) return null;
       return { id: userDoc.id, ...userDoc.data() } as User;
     } catch (error) {
@@ -261,41 +267,55 @@ export class DatabaseService {
         }
       }
 
-      // Convert string[] to Professor[] format for type compatibility (same as getCourses)
-      const professorsData = data.professors || [];
-      const professors: Professor[] = Array.isArray(professorsData) && professorsData.length > 0
-        ? professorsData.map((prof: any, index: number) => {
-            // If prof is a string (professor name), convert to Professor object
-            if (typeof prof === 'string') {
+        // Convert string[] to Professor[] format for type compatibility (same as getCourses)
+        const professorsData = data.professors || [];
+        const professors: Professor[] = Array.isArray(professorsData) && professorsData.length > 0
+          ? professorsData.map((prof: any, index: number) => {
+              // If prof is a string (professor name), convert to Professor object
+              // Default to max ratings when professor is just a name (no actual ratings yet)
+              if (typeof prof === 'string') {
+                return {
+                  id: `prof-${index}-${prof.replace(/\s+/g, '-').toLowerCase()}`,
+                  name: prof.trim(),
+                  courses: [],
+                  ratings: [],
+                  averageRating: {
+                    totalRating: 5,
+                    difficulty: 1,
+                    enjoyment: 5,
+                    retakePercentage: 100,
+                    understandability: 5,
+                  },
+                } as Professor;
+              }
+              // If it's already an object, use it as-is (with defaults if needed)
+              // Handle both old and new averageRating structures
+              const oldRating = prof.averageRating;
+              const newRating = oldRating ? {
+                // If rating is all zeros, default to max (professor has no actual ratings)
+                totalRating: (oldRating.totalRating && oldRating.totalRating > 0) ? oldRating.totalRating : (oldRating.enjoyment ?? 5),
+                difficulty: (oldRating.difficulty && oldRating.difficulty > 0) ? oldRating.difficulty : (oldRating.hardness ? 5 - oldRating.hardness + 1 : 1),
+                enjoyment: (oldRating.enjoyment && oldRating.enjoyment > 0) ? oldRating.enjoyment : 5,
+                retakePercentage: (oldRating.retakePercentage && oldRating.retakePercentage > 0) ? oldRating.retakePercentage : 100,
+                understandability: (oldRating.understandability && oldRating.understandability > 0) ? oldRating.understandability : (oldRating.communication ?? 5),
+              } : {
+                totalRating: 5,
+                difficulty: 1,
+                enjoyment: 5,
+                retakePercentage: 100,
+                understandability: 5,
+              };
+              
               return {
-                id: `prof-${index}-${prof.replace(/\s+/g, '-').toLowerCase()}`,
-                name: prof.trim(),
-                courses: [],
-                ratings: [],
-                averageRating: {
-                  hardness: 0,
-                  coursework: 0,
-                  communication: 0,
-                  enjoyment: 0,
-                },
+                id: prof.id || `prof-${index}`,
+                name: prof.name || '',
+                email: prof.email,
+                courses: prof.courses || [],
+                ratings: prof.ratings || [],
+                averageRating: newRating,
               } as Professor;
-            }
-            // If it's already an object, use it as-is (with defaults if needed)
-            return {
-              id: prof.id || `prof-${index}`,
-              name: prof.name || '',
-              email: prof.email,
-              courses: prof.courses || [],
-              ratings: prof.ratings || [],
-              averageRating: prof.averageRating || {
-                hardness: 0,
-                coursework: 0,
-                communication: 0,
-                enjoyment: 0,
-              },
-            } as Professor;
-          })
-        : [];
+            })
+          : [];
       
       // Handle members - array of user IDs
       const members: string[] = data.members || [];
@@ -354,6 +374,7 @@ export class DatabaseService {
         const professors: Professor[] = Array.isArray(professorsData) && professorsData.length > 0
           ? professorsData.map((prof: any, index: number) => {
               // If prof is a string (professor name), convert to Professor object
+              // Default to max ratings when professor is just a name (no actual ratings yet)
               if (typeof prof === 'string') {
                 return {
                   id: `prof-${index}-${prof.replace(/\s+/g, '-').toLowerCase()}`,
@@ -361,26 +382,39 @@ export class DatabaseService {
                   courses: [],
                   ratings: [],
                   averageRating: {
-                    hardness: 0,
-                    coursework: 0,
-                    communication: 0,
-                    enjoyment: 0,
+                    totalRating: 5,
+                    difficulty: 1,
+                    enjoyment: 5,
+                    retakePercentage: 100,
+                    understandability: 5,
                   },
                 } as Professor;
               }
               // If it's already an object, use it as-is (with defaults if needed)
+              // Handle both old and new averageRating structures
+              const oldRating = prof.averageRating;
+              const newRating = oldRating ? {
+                // If rating is all zeros, default to max (professor has no actual ratings)
+                totalRating: (oldRating.totalRating && oldRating.totalRating > 0) ? oldRating.totalRating : (oldRating.enjoyment ?? 5),
+                difficulty: (oldRating.difficulty && oldRating.difficulty > 0) ? oldRating.difficulty : (oldRating.hardness ? 5 - oldRating.hardness + 1 : 1),
+                enjoyment: (oldRating.enjoyment && oldRating.enjoyment > 0) ? oldRating.enjoyment : 5,
+                retakePercentage: (oldRating.retakePercentage && oldRating.retakePercentage > 0) ? oldRating.retakePercentage : 100,
+                understandability: (oldRating.understandability && oldRating.understandability > 0) ? oldRating.understandability : (oldRating.communication ?? 5),
+              } : {
+                totalRating: 5,
+                difficulty: 1,
+                enjoyment: 5,
+                retakePercentage: 100,
+                understandability: 5,
+              };
+              
               return {
                 id: prof.id || `prof-${index}`,
                 name: prof.name || '',
                 email: prof.email,
                 courses: prof.courses || [],
                 ratings: prof.ratings || [],
-                averageRating: prof.averageRating || {
-                  hardness: 0,
-                  coursework: 0,
-                  communication: 0,
-                  enjoyment: 0,
-                },
+                averageRating: newRating,
               } as Professor;
             })
           : [];
@@ -423,46 +457,383 @@ export class DatabaseService {
     try {
       const profDoc = await getDoc(doc(db, 'professors', professorId));
       if (!profDoc.exists()) return null;
-      return { id: profDoc.id, ...profDoc.data() } as Professor;
+      
+      const data = profDoc.data();
+      
+      // Get all ratings for this professor
+      const ratingsSnapshot = await getDocs(
+        collection(db, 'professors', professorId, 'ratings')
+      );
+      
+      const ratings = ratingsSnapshot.docs.map(doc => {
+        const ratingData = doc.data();
+        let createdAt = new Date();
+        if (ratingData.createdAt && typeof ratingData.createdAt.toDate === 'function') {
+          createdAt = ratingData.createdAt.toDate();
+        } else if (ratingData.createdAt instanceof Date) {
+          createdAt = ratingData.createdAt;
+        }
+        
+        return {
+          id: doc.id,
+          ...ratingData,
+          createdAt,
+        } as ProfessorRating;
+      });
+      
+      // Calculate average ratings from all ratings
+      const totalRatings = ratings.length;
+      let averages;
+      
+      if (totalRatings === 0) {
+        // Default to max ratings (5/5) when no ratings exist
+        // If stored averageRating exists with zeros, use max as default
+        const storedRating = data.averageRating;
+        if (storedRating && storedRating.totalRating === 0 && storedRating.difficulty === 0) {
+          // If all zeros, default to max (except difficulty which starts at 1 - easy)
+          averages = {
+            totalRating: 5,
+            difficulty: 1,
+            enjoyment: 5,
+            retakePercentage: 100,
+            understandability: 5,
+          };
+        } else {
+          // Use stored averageRating if it has values, otherwise default to max (except difficulty)
+          averages = storedRating || {
+            totalRating: 5,
+            difficulty: 1,
+            enjoyment: 5,
+            retakePercentage: 100,
+            understandability: 5,
+          };
+        }
+      } else {
+        // Calculate from actual ratings
+        const avgDifficulty = ratings.reduce((sum, r) => sum + (r.difficulty || 0), 0) / totalRatings;
+        const avgEnjoyment = ratings.reduce((sum, r) => sum + (r.enjoyment || 0), 0) / totalRatings;
+        const avgUnderstandability = ratings.reduce((sum, r) => sum + (r.understandability || 0), 0) / totalRatings;
+        const retakePercentage = (ratings.filter(r => r.retake === true).length / totalRatings) * 100;
+        
+        // Calculate overall rating as average of: inverted difficulty (low is good), enjoyment, understandability, and retake percentage
+        // Invert difficulty: 6 - difficulty (so 1 difficulty = 5 score, 5 difficulty = 1 score)
+        const invertedDifficulty = 6 - avgDifficulty; // 1 difficulty becomes 5 score, 5 difficulty becomes 1 score
+        
+        // Convert retake percentage to 1-5 scale (100% = 5, 0% = 1)
+        const retakeScore = 1 + (retakePercentage / 100) * 4; // 0% = 1, 100% = 5
+        
+        // Average all four metrics (inverted difficulty, enjoyment, understandability, retake)
+        const overallRating = (invertedDifficulty + avgEnjoyment + avgUnderstandability + retakeScore) / 4;
+        
+        averages = {
+          totalRating: overallRating,
+          difficulty: avgDifficulty,
+          enjoyment: avgEnjoyment,
+          retakePercentage: retakePercentage,
+          understandability: avgUnderstandability,
+        };
+      }
+      
+      return {
+        id: profDoc.id,
+        name: data.name || '',
+        email: data.email,
+        image: data.image,
+        courses: data.courses || [],
+        universityId: data.universityId,
+        ratings,
+        averageRating: averages,
+      } as Professor;
     } catch (error) {
       console.error('Error getting professor:', error);
       return null;
     }
   }
 
-  static async rateProfessor(
-    professorId: string,
-    courseId: string,
-    userId: string,
-    rating: Omit<ProfessorRating, 'userId' | 'courseId' | 'createdAt'>
-  ): Promise<void> {
+  static async getProfessors(universityId?: string, searchQuery?: string): Promise<Professor[]> {
     try {
-      const ratingRef = doc(db, 'professors', professorId, 'ratings', `${userId}_${courseId}`);
-      await setDoc(ratingRef, {
-        userId,
-        courseId,
-        ...rating,
+      let q;
+      if (universityId) {
+        q = query(
+          collection(db, 'professors'),
+          where('universityId', '==', universityId)
+        );
+      } else {
+        q = query(collection(db, 'professors'));
+      }
+      
+      const querySnapshot = await getDocs(q);
+      const professorPromises = querySnapshot.docs.map(doc => this.getProfessor(doc.id));
+      
+      const profsResult = await Promise.all(professorPromises);
+      let profs = profsResult.filter((p): p is Professor => p !== null);
+      
+      // Filter by search query if provided
+      if (searchQuery) {
+        profs = profs.filter(p => 
+          p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          p.email?.toLowerCase().includes(searchQuery.toLowerCase())
+        );
+      }
+      
+      return profs;
+    } catch (error) {
+      console.error('Error getting professors:', error);
+      return [];
+    }
+  }
+
+  static async getOrCreateProfessor(name: string, universityId: string, email?: string): Promise<string> {
+    try {
+      // Search for existing professor by name and university
+      const q = query(
+        collection(db, 'professors'),
+        where('universityId', '==', universityId)
+      );
+      const querySnapshot = await getDocs(q);
+      
+      const existingProf = querySnapshot.docs.find(doc => {
+        const data = doc.data();
+        return (data.name || '').toLowerCase().trim() === name.toLowerCase().trim();
+      });
+      
+      let professorId: string;
+      let isNewProfessor = false;
+      
+      if (existingProf) {
+        professorId = existingProf.id;
+      } else {
+        // Create new professor with default max ratings
+        const docRef = await addDoc(collection(db, 'professors'), {
+          name: name.trim(),
+          email: email?.trim(),
+          universityId,
+          courses: [],
+        averageRating: {
+          totalRating: 5,
+          difficulty: 1,
+          enjoyment: 5,
+          retakePercentage: 100,
+          understandability: 5,
+        },
         createdAt: Timestamp.now(),
       });
-
-      // Update professor average rating
-      const ratingsSnapshot = await getDocs(
-        collection(db, 'professors', professorId, 'ratings')
-      );
-      const ratings = ratingsSnapshot.docs.map(doc => doc.data() as ProfessorRating);
+        professorId = docRef.id;
+        isNewProfessor = true;
+      }
       
-      const averages = {
-        hardness: ratings.reduce((sum, r) => sum + r.hardness, 0) / ratings.length,
-        coursework: ratings.reduce((sum, r) => sum + r.coursework, 0) / ratings.length,
-        communication: ratings.reduce((sum, r) => sum + r.communication, 0) / ratings.length,
-        enjoyment: ratings.reduce((sum, r) => sum + r.enjoyment, 0) / ratings.length,
+      // When a professor is created or found, update associated courses
+      // Search for courses that have this professor's name as a string in their professors array
+      // Note: Courses store professors as strings (names), so we keep that format but ensure
+      // the professor document's courses array is updated with the course IDs
+      const coursesQuery = query(
+        collection(db, 'courses'),
+        where('universityId', '==', universityId)
+      );
+      const coursesSnapshot = await getDocs(coursesQuery);
+      
+      const professorName = name.trim();
+      const professorNameLower = professorName.toLowerCase();
+      const updatedCourseIds: string[] = [];
+      
+      // Find courses that have this professor name
+      coursesSnapshot.docs.forEach(courseDoc => {
+        const courseData = courseDoc.data();
+        const professorsData = courseData.professors || [];
+        
+        // Check if course has this professor name as a string
+        const hasProfessorName = professorsData.some((prof: any) => {
+          if (typeof prof === 'string') {
+            return prof.toLowerCase().trim() === professorNameLower;
+          }
+          if (prof && typeof prof === 'object' && prof.name) {
+            return prof.name.toLowerCase().trim() === professorNameLower;
+          }
+          return false;
+        });
+        
+        if (hasProfessorName) {
+          updatedCourseIds.push(courseDoc.id);
+        }
+      });
+      
+      // Update professor's courses array with the associated course IDs
+      if (updatedCourseIds.length > 0) {
+        const profRef = doc(db, 'professors', professorId);
+        const profDoc = await getDoc(profRef);
+        if (profDoc.exists()) {
+          const profData = profDoc.data();
+          const existingCourses = profData.courses || [];
+          const newCourses = updatedCourseIds.filter(courseId => !existingCourses.includes(courseId));
+          
+          if (newCourses.length > 0) {
+            // Update professor's courses array
+            await updateDoc(profRef, {
+              courses: arrayUnion(...newCourses),
+            });
+          }
+        }
+      }
+      
+      return professorId;
+    } catch (error) {
+      console.error('Error getting/creating professor:', error);
+      throw error;
+    }
+  }
+
+  static async createProfessorRating(
+    professorId: string,
+    rating: Omit<ProfessorRating, 'id' | 'createdAt'>
+  ): Promise<string> {
+    try {
+      // Ensure professor document exists
+      const profDoc = await getDoc(doc(db, 'professors', professorId));
+      if (!profDoc.exists()) {
+        throw new Error('Professor not found. Please ensure the professor exists.');
+      }
+
+      const profData = profDoc.data();
+      const professorName = profData.name || '';
+      
+      // Update the course to include this professor name if not already there
+      // Note: Courses store professors as strings (names) for simplicity and backward compatibility
+      // This is done before creating the rating to ensure the course knows about the professor
+      if (rating.courseId) {
+        const courseDoc = await getDoc(doc(db, 'courses', rating.courseId));
+        if (courseDoc.exists()) {
+          const courseData = courseDoc.data();
+          const professorsData = courseData.professors || [];
+          const professorNameLower = professorName.toLowerCase();
+          
+          // Check if professor name is already in the course (as string)
+          const hasProfessor = professorsData.some((prof: any) => {
+            if (typeof prof === 'string') {
+              return prof.toLowerCase().trim() === professorNameLower;
+            }
+            if (prof && typeof prof === 'object' && prof.name) {
+              return prof.name.toLowerCase().trim() === professorNameLower;
+            }
+            return false;
+          });
+          
+          if (!hasProfessor) {
+            // Add professor name to course's professors array (as string for consistency)
+            await updateDoc(courseDoc.ref, {
+              professors: arrayUnion(professorName),
+            });
+          }
+        }
+      }
+
+      // Create rating document in subcollection
+      // Filter out undefined values - Firestore doesn't accept undefined
+      const ratingData: any = {
+        totalRating: rating.totalRating,
+        difficulty: rating.difficulty,
+        enjoyment: rating.enjoyment,
+        understandability: rating.understandability,
+        retake: rating.retake,
+        anonymous: rating.anonymous,
+        upvotes: [],
+        downvotes: [],
+        createdAt: Timestamp.now(),
       };
 
-      await updateDoc(doc(db, 'professors', professorId), {
-        averageRating: averages,
+      // Only include userId if it's not undefined (for anonymous ratings)
+      if (rating.userId !== undefined && rating.userId !== null) {
+        ratingData.userId = rating.userId;
+      }
+
+      // Only include optional fields if they exist
+      if (rating.courseId) {
+        ratingData.courseId = rating.courseId;
+      }
+      if (rating.text) {
+        ratingData.text = rating.text;
+      }
+
+      const ratingRef = collection(db, 'professors', professorId, 'ratings');
+      const docRef = await addDoc(ratingRef, ratingData);
+
+      // After rating is successfully created, update professor's courses array if courseId is provided
+      // This ensures we only add the course if the rating was successfully created
+      if (rating.courseId && rating.courseId.trim()) {
+        // Re-fetch professor data to get latest courses array
+        const updatedProfDoc = await getDoc(doc(db, 'professors', professorId));
+        if (updatedProfDoc.exists()) {
+          const updatedProfData = updatedProfDoc.data();
+          const courses = updatedProfData.courses || [];
+          const normalizedCourseId = rating.courseId.trim();
+          
+          // Normalize existing courses for comparison
+          const normalizedCourses = (courses as any[]).map((c: any) => {
+            if (typeof c === 'string') return c.trim();
+            if (c && typeof c === 'object' && c.id) return c.id.trim();
+            return String(c).trim();
+          });
+          
+          // Check if course is already in the professor's courses array
+          const courseExists = normalizedCourses.some((c: string) => c === normalizedCourseId);
+          
+          if (!courseExists) {
+            // Add course to professor's courses array
+            await updateDoc(doc(db, 'professors', professorId), {
+              courses: arrayUnion(normalizedCourseId),
+            });
+            console.log(`Added course ${normalizedCourseId} to professor ${professorId}'s courses array after rating submission`);
+          }
+        }
+      }
+
+      // Update professor average rating
+      const professor = await this.getProfessor(professorId);
+      if (professor) {
+        await updateDoc(doc(db, 'professors', professorId), {
+          averageRating: professor.averageRating,
+        });
+      }
+
+      return docRef.id;
+    } catch (error) {
+      console.error('Error creating professor rating:', error);
+      throw error;
+    }
+  }
+
+  static async voteProfessorRating(
+    professorId: string,
+    ratingId: string,
+    userId: string,
+    voteType: 'upvote' | 'downvote' | 'remove'
+  ): Promise<void> {
+    try {
+      const ratingRef = doc(db, 'professors', professorId, 'ratings', ratingId);
+      const ratingDoc = await getDoc(ratingRef);
+      
+      if (!ratingDoc.exists()) throw new Error('Rating not found');
+
+      const data = ratingDoc.data();
+      let upvotes = [...(data.upvotes || [])];
+      let downvotes = [...(data.downvotes || [])];
+
+      // Remove existing votes
+      upvotes = upvotes.filter(id => id !== userId);
+      downvotes = downvotes.filter(id => id !== userId);
+
+      // Add new vote if not removing
+      if (voteType === 'upvote') {
+        upvotes.push(userId);
+      } else if (voteType === 'downvote') {
+        downvotes.push(userId);
+      }
+
+      await updateDoc(ratingRef, {
+        upvotes,
+        downvotes,
       });
     } catch (error) {
-      console.error('Error rating professor:', error);
+      console.error('Error voting on professor rating:', error);
       throw error;
     }
   }
@@ -728,6 +1099,87 @@ export class DatabaseService {
       return docRef.id;
     } catch (error: any) {
       console.error('Error requesting course:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Submit a professor request for verification
+   */
+  static async requestProfessor(professor: { name: string; email?: string; image?: string; universityId: string; courseIds?: string[] }, userId: string): Promise<string> {
+    try {
+      // Validate universityId - ensure it's not empty
+      if (!professor.universityId || !professor.universityId.trim()) {
+        throw new Error('University ID is required');
+      }
+
+      const universityId = professor.universityId.trim();
+
+      // Verify that the universityId matches the format used by existing professors
+      // Get a sample of existing professors to verify universityId format consistency
+      const existingSnapshot = await getDocs(query(collection(db, 'professors'), where('universityId', '==', universityId)));
+      const requestsSnapshot = await getDocs(query(collection(db, 'professor_requests'), where('universityId', '==', universityId)));
+
+      // Check for duplicates (case-insensitive) - same name, same university (courses can differ)
+      // Ensure universityId matches exactly (already filtered by query, but validate for consistency)
+      const allProfessors = [...existingSnapshot.docs, ...requestsSnapshot.docs];
+      const duplicate = allProfessors.find(doc => {
+        const data = doc.data();
+        const docUniversityId = (data.universityId || '').trim();
+        return (data.name || '').toLowerCase().trim() === professor.name.toLowerCase().trim() && 
+               docUniversityId === universityId;
+      });
+
+      if (duplicate) {
+        throw new Error('A professor with this name already exists or is pending review for this university');
+      }
+
+      // Verify that if courseIds are provided, they belong to the same university
+      if (professor.courseIds && professor.courseIds.length > 0) {
+        for (const courseId of professor.courseIds) {
+          try {
+            const courseDoc = await getDoc(doc(db, 'courses', courseId));
+            if (courseDoc.exists()) {
+              const courseData = courseDoc.data();
+              const courseUniversityId = (courseData.universityId || '').trim();
+              if (courseUniversityId !== universityId) {
+                console.warn(`Course ${courseId} belongs to university ${courseUniversityId}, but professor universityId is ${universityId}. Course will be filtered during processing.`);
+              }
+            }
+          } catch (error) {
+            console.error(`Error checking course ${courseId}:`, error);
+          }
+        }
+      }
+
+      // Create request document with courseIds array
+      // Ensure universityId is trimmed and consistent
+      const requestData: any = {
+        name: professor.name.trim(),
+        email: professor.email?.trim() || null,
+        image: professor.image?.trim() || null,
+        universityId: universityId, // Use validated and trimmed universityId
+        courseIds: professor.courseIds && professor.courseIds.length > 0 ? professor.courseIds : [],
+        nameLowercase: professor.name.toLowerCase().trim(),
+        userId: userId,
+        status: 'pending',
+        requestedAt: Timestamp.now(),
+        verified: false,
+      };
+
+      const docRef = await addDoc(collection(db, 'professor_requests'), requestData);
+      
+      // Check if we've reached the threshold (100 requests) and process if so
+      const allRequests = await getDocs(collection(db, 'professor_requests'));
+      if (allRequests.size >= 100) {
+        DatabaseService.processProfessorRequests().catch(error => {
+          console.error('Error processing professor requests:', error);
+        });
+      }
+      
+      return docRef.id;
+    } catch (error: any) {
+      console.error('Error requesting professor:', error);
       throw error;
     }
   }
@@ -1607,6 +2059,281 @@ export class DatabaseService {
       console.log(`Successfully processed ${organizationsToAdd.length} organizations and deleted ${requestIdsToDelete.length} requests`);
     } catch (error) {
       console.error('Error processing organization requests:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Process professor requests when threshold (100) is reached
+   */
+  static async processProfessorRequests(): Promise<void> {
+    try {
+      const requestsSnapshot = await getDocs(collection(db, 'professor_requests'));
+      
+      if (requestsSnapshot.size < 100) {
+        console.log(`Only ${requestsSnapshot.size} professor requests, threshold not reached`);
+        return;
+      }
+
+      console.log(`Processing ${requestsSnapshot.size} professor requests...`);
+
+      // Get existing professors for duplicate checking (grouped by universityId)
+      const existingSnapshot = await getDocs(collection(db, 'professors'));
+      const existingProfessors = new Map<string, Set<string>>(); // universityId -> Set of nameLowercase
+      
+      existingSnapshot.docs.forEach(doc => {
+        const data = doc.data();
+        const uniId = data.universityId || '';
+        if (!existingProfessors.has(uniId)) {
+          existingProfessors.set(uniId, new Set());
+        }
+        const nameLowercase = (data.name || '').toLowerCase().trim();
+        if (nameLowercase) {
+          existingProfessors.get(uniId)!.add(nameLowercase);
+        }
+      });
+
+      // Group requests by similar names (per university, courses can differ)
+      const requestDocs = requestsSnapshot.docs;
+      const processed = new Set<string>();
+      const groups: Array<Array<typeof requestDocs[0]>> = [];
+
+      for (let i = 0; i < requestDocs.length; i++) {
+        if (processed.has(requestDocs[i].id)) continue;
+
+        const group = [requestDocs[i]];
+        processed.add(requestDocs[i].id);
+        const uniId1 = requestDocs[i].data().universityId || '';
+
+        for (let j = i + 1; j < requestDocs.length; j++) {
+          if (processed.has(requestDocs[j].id)) continue;
+
+          const req2 = requestDocs[j].data();
+          const uniId2 = req2.universityId || '';
+          
+          // Only group if same university
+          if (uniId1 !== uniId2) continue;
+
+          const req1 = requestDocs[i].data();
+          const name1 = (req1.name || '').toLowerCase().trim();
+          const name2 = (req2.name || '').toLowerCase().trim();
+
+          // If name similarity is >= 0.75, group them together (courses can differ)
+          if (name1 && name2 && this.stringSimilarity(name1, name2) >= 0.75) {
+            group.push(requestDocs[j]);
+            processed.add(requestDocs[j].id);
+          }
+        }
+
+        groups.push(group);
+      }
+
+      console.log(`Grouped ${requestDocs.length} professor requests into ${groups.length} groups`);
+
+      // Process each group and create professors
+      const professorsToAdd: Array<{ id: string; name: string; email?: string; image?: string; universityId: string; courses: string[] }> = [];
+      const requestIdsToDelete: string[] = [];
+
+      for (const group of groups) {
+        if (group.length === 0) continue;
+
+        const firstData = group[0].data();
+        
+        // Extract university IDs from all requests in the group to ensure consistency
+        const universityIds = group.map(doc => doc.data().universityId || '').filter(uid => uid.trim());
+        const mostCommonUniversityId = this.findMostCommonNonEmpty(universityIds) || '';
+        
+        // Ensure all requests have the same universityId (should be true due to grouping, but validate)
+        if (!mostCommonUniversityId) {
+          console.log('Skipping group with no valid universityId');
+          group.forEach(doc => requestIdsToDelete.push(doc.id));
+          continue;
+        }
+        
+        // Verify that the universityId matches existing professors in that university
+        // This ensures consistency - all professors in the same university must have the same universityId
+        const uniId = mostCommonUniversityId;
+        
+        // Extract all values from the group
+        const names = group.map(doc => doc.data().name || '').filter(n => n.trim());
+        const emails = group.map(doc => doc.data().email || '').filter(e => e.trim());
+        const images = group.map(doc => doc.data().image || '').filter(img => img.trim());
+        
+        // Extract course IDs from all requests (unique, can differ between requests)
+        // Handle both courseId (single) and courseIds (array) for backward compatibility
+        const allCourseIds: string[] = [];
+        group.forEach(doc => {
+          const data = doc.data();
+          // Check for courseIds array first (new format)
+          if (data.courseIds && Array.isArray(data.courseIds)) {
+            data.courseIds.forEach((courseId: string) => {
+              if (courseId && courseId.trim() && !allCourseIds.includes(courseId.trim())) {
+                allCourseIds.push(courseId.trim());
+              }
+            });
+          }
+          // Fallback to courseId (old format) for backward compatibility
+          else if (data.courseId && data.courseId.trim() && !allCourseIds.includes(data.courseId.trim())) {
+            allCourseIds.push(data.courseId.trim());
+          }
+        });
+
+        // Find most common values
+        const mostCommonName = this.findMostCommonNonEmpty(names);
+        const mostCommonEmail = this.findMostCommonNonEmpty(emails);
+        const mostCommonImage = this.findMostCommonNonEmpty(images);
+        if (!mostCommonName || !uniId) continue;
+
+        // Verify universityId consistency: ensure it matches the universityId used by existing professors in that university
+        // This is a safety check to ensure all professors in the same university share the same universityId
+        if (existingProfessors.has(uniId)) {
+          // Verify that all existing professors with similar names in this university have the same universityId
+          // This should already be true, but we validate for consistency
+        }
+
+        // Check for duplicate against existing professors for this university (case-insensitive name)
+        const nameLowercase = mostCommonName.toLowerCase().trim();
+        if (existingProfessors.has(uniId) && existingProfessors.get(uniId)!.has(nameLowercase)) {
+          console.log(`Skipping duplicate professor: ${mostCommonName} in university ${uniId}`);
+          group.forEach(doc => requestIdsToDelete.push(doc.id));
+          continue;
+        }
+
+        // Generate document ID: name lowercase with underscores
+        const professorId = mostCommonName.toLowerCase().trim().replace(/\s+/g, '_');
+
+        // Check if professor with this ID already exists (shouldn't happen due to duplicate check, but safety check)
+        const existingProfDoc = await getDoc(doc(db, 'professors', professorId));
+        if (existingProfDoc.exists()) {
+          console.log(`Skipping professor with existing ID: ${professorId}`);
+          group.forEach(doc => requestIdsToDelete.push(doc.id));
+          continue;
+        }
+
+        // Prepare professor data with default max ratings
+        const professorData = {
+          id: professorId,
+          name: mostCommonName.trim(),
+          email: mostCommonEmail?.trim() || undefined,
+          image: mostCommonImage?.trim() || undefined,
+          universityId: uniId,
+          courses: allCourseIds, // Can include multiple courses
+          averageRating: {
+            totalRating: 5,
+            difficulty: 1, // Default to 1 (easy)
+            enjoyment: 5,
+            retakePercentage: 100,
+            understandability: 5,
+          },
+        };
+
+        professorsToAdd.push(professorData);
+        if (!existingProfessors.has(uniId)) {
+          existingProfessors.set(uniId, new Set());
+        }
+        existingProfessors.get(uniId)!.add(nameLowercase); // Prevent duplicates within this batch
+
+        // Mark all requests in this group for deletion
+        group.forEach(doc => requestIdsToDelete.push(doc.id));
+      }
+
+      // Firestore batch limit is 500 operations
+      const MAX_BATCH_SIZE = 500;
+      let batchOps = 0;
+      let currentBatch = writeBatch(db);
+      const batches: typeof currentBatch[] = [currentBatch];
+
+      // Get all course IDs that need to be updated and verify they exist and belong to the same university
+      const allUniqueCourseIds = new Set<string>();
+      professorsToAdd.forEach(prof => {
+        prof.courses.forEach(courseId => allUniqueCourseIds.add(courseId));
+      });
+
+      const existingCourses = new Map<string, string>(); // courseId -> universityId
+      for (const courseId of allUniqueCourseIds) {
+        try {
+          const courseDoc = await getDoc(doc(db, 'courses', courseId));
+          if (courseDoc.exists()) {
+            const courseData = courseDoc.data();
+            const courseUniversityId = courseData.universityId || '';
+            existingCourses.set(courseId, courseUniversityId);
+          }
+        } catch (error) {
+          console.error(`Error checking course ${courseId}:`, error);
+        }
+      }
+
+      // Add all professors with specific document IDs
+      for (const professorData of professorsToAdd) {
+        if (batchOps >= MAX_BATCH_SIZE) {
+          currentBatch = writeBatch(db);
+          batches.push(currentBatch);
+          batchOps = 0;
+        }
+
+        // Use setDoc with specific ID (name lowercase with underscores)
+        const professorRef = doc(db, 'professors', professorData.id);
+        
+        // Filter courses to only include existing ones that belong to the same university
+        // This ensures the professor's universityId matches the universityId of their courses
+        const validCourseIds = (professorData.courses || []).filter(id => {
+          const courseUniversityId = existingCourses.get(id);
+          // Only include courses that exist and belong to the same university as the professor
+          return courseUniversityId && courseUniversityId === professorData.universityId;
+        });
+        
+        // Prepare data without id field (Firestore ID is separate)
+        // Ensure universityId is explicitly set to match other professors in the same university
+        const { id, ...profData } = professorData;
+        currentBatch.set(professorRef, {
+          ...profData,
+          universityId: professorData.universityId, // Explicitly set to ensure consistency
+          courses: validCourseIds,
+          createdAt: Timestamp.now(),
+        });
+        batchOps++;
+
+        // Also update courses to include this professor (only for existing courses in the same university)
+        for (const courseId of validCourseIds) {
+          if (batchOps >= MAX_BATCH_SIZE) {
+            currentBatch = writeBatch(db);
+            batches.push(currentBatch);
+            batchOps = 0;
+          }
+
+          // Verify course belongs to the same university before updating
+          const courseUniversityId = existingCourses.get(courseId);
+          if (courseUniversityId === professorData.universityId) {
+            const courseRef = doc(db, 'courses', courseId);
+            currentBatch.update(courseRef, {
+              professors: arrayUnion(professorData.name.trim()),
+            });
+            batchOps++;
+          }
+        }
+      }
+
+      // Delete all processed requests
+      for (const requestId of requestIdsToDelete) {
+        if (batchOps >= MAX_BATCH_SIZE) {
+          currentBatch = writeBatch(db);
+          batches.push(currentBatch);
+          batchOps = 0;
+        }
+
+        const requestRef = doc(db, 'professor_requests', requestId);
+        currentBatch.delete(requestRef);
+        batchOps++;
+      }
+
+      // Commit all batches sequentially
+      for (const batchToCommit of batches) {
+        await batchToCommit.commit();
+      }
+
+      console.log(`Successfully processed ${professorsToAdd.length} professors and deleted ${requestIdsToDelete.length} requests`);
+    } catch (error) {
+      console.error('Error processing professor requests:', error);
       throw error;
     }
   }

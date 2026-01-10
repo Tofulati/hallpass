@@ -19,6 +19,9 @@ import ClubDetailScreen from '../screens/ClubDetailScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import ChatScreen from '../screens/ChatScreen';
+import ProfessorDetailScreen from '../screens/ProfessorDetailScreen';
+import CreateProfessorRatingScreen from '../screens/CreateProfessorRatingScreen';
+import RequestProfessorScreen from '../screens/RequestProfessorScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -34,6 +37,16 @@ const BulletinStack = () => (
       name="CreateDiscussion" 
       component={CreateDiscussionScreen}
       options={{ title: 'Create Discussion' }}
+    />
+    <Stack.Screen 
+      name="ProfessorDetail" 
+      component={ProfessorDetailScreen}
+      options={{ title: 'Professor Profile' }}
+    />
+    <Stack.Screen 
+      name="CreateProfessorRating" 
+      component={CreateProfessorRatingScreen}
+      options={{ title: 'Rate Professor' }}
     />
   </Stack.Navigator>
 );
@@ -59,6 +72,21 @@ const CourseStack = () => (
       name="Profile" 
       component={ProfileScreen}
       options={{ title: 'Profile' }}
+    />
+    <Stack.Screen 
+      name="ProfessorDetail" 
+      component={ProfessorDetailScreen}
+      options={{ title: 'Professor Profile' }}
+    />
+    <Stack.Screen 
+      name="CreateProfessorRating" 
+      component={CreateProfessorRatingScreen}
+      options={{ title: 'Rate Professor' }}
+    />
+    <Stack.Screen 
+      name="RequestProfessor" 
+      component={RequestProfessorScreen}
+      options={{ title: 'Request Add Professor' }}
     />
   </Stack.Navigator>
 );
@@ -104,6 +132,41 @@ const MessageStack = () => (
       name="Profile" 
       component={ProfileScreen}
       options={{ title: 'Profile' }}
+    />
+  </Stack.Navigator>
+);
+
+const SearchStack = () => (
+  <Stack.Navigator>
+    <Stack.Screen 
+      name="SearchMain" 
+      component={SearchScreen}
+      options={{ headerShown: false }}
+    />
+    <Stack.Screen 
+      name="Profile" 
+      component={ProfileScreen}
+      options={{ title: 'Profile' }}
+    />
+    <Stack.Screen 
+      name="CourseDetail" 
+      component={CourseDetailScreen}
+      options={{ title: 'Course Details' }}
+    />
+    <Stack.Screen 
+      name="ClubDetail" 
+      component={ClubDetailScreen}
+      options={{ title: 'Club Details' }}
+    />
+    <Stack.Screen 
+      name="ProfessorDetail" 
+      component={ProfessorDetailScreen}
+      options={{ title: 'Professor Profile' }}
+    />
+    <Stack.Screen 
+      name="CreateProfessorRating" 
+      component={CreateProfessorRatingScreen}
+      options={{ title: 'Rate Professor' }}
     />
   </Stack.Navigator>
 );
@@ -204,7 +267,7 @@ export default function AppNavigator() {
         />
         <Tab.Screen 
           name="Search" 
-          component={SearchScreen}
+          component={SearchStack}
           options={{ headerShown: false }}
         />
         <Tab.Screen 
