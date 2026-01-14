@@ -241,13 +241,12 @@ See [SETUP.md](./SETUP.md) for complete setup and build instructions.
 - [ ] Advanced ML models for content moderation
 - [ ] Video support for discussions
 
-## Contributing
+## Samples
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test thoroughly
-5. Submit a pull request
+![Home Page Simulator](assets/HomePageSim.png)
+![Course Page Simulator](assets/CoursePageSim.png)
+![Organization Page Simulator](assets/OrgPageSim.png)
+![Profile Page Simulator](assets/ProfilePageSim.png)
 
 ## License
 
