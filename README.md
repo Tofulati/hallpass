@@ -4,53 +4,47 @@ A cross-platform mobile application that combines the best of Reddit and Instagr
 
 ## Features
 
-### 🏠 Bulletin (Home Tab)
-- University-branded feed with discussions
-- Filter by topics, courses, professors, or organizations
-- Create discussions with tags and associations
-- Upvote (A) or Downvote (F) posts
-- Sort by popularity or controversy
-- ML-powered ranking system
+### 🏠 Bulletin + Notifications
+- University feed with course, club, and campus-wide threads
+- Sort by popularity, controversy, or recency using ML-assisted ranking
+- Create discussions with tags and optional course/club/professor context
+- Dedicated notifications view for:
+  - Incoming follow requests (accept/decline)
+  - Trending discussions in your courses and organizations
 
-### 📚 Course Tab
-- Browse and search courses
-- Filter by enrolled courses or interests
-- Rate professors on:
-  - Hardness
-  - Coursework
-  - Communication
-  - Enjoyment
-- Access private course sessions (for enrolled students)
-- Course-specific discussion boards
+### 📚 Course Experience
+- Browse and search university courses
+- Course detail tabs for discussions, private discussions, professors, and members
+- Private course discussions for enrolled students only
+- Professor profiles with ratings and review flow
+- "Request Add Professor" flow directly from course pages
 
-### 👥 Clubs Tab
-- Discover university clubs and organizations
-- Club-specific pages and discussions
-- Rate clubs on engagement, community, events, and overall experience
-- Join and participate in club activities
+### 👥 Clubs and Organizations
+- Discover campus organizations and clubs
+- Organization detail pages with discussions and membership context
+- Club rating dimensions: engagement, community, events, overall
 
-### 💬 Message Tab
-- Private messaging between users
-- Real-time conversations
-- Message clubs and organizations
+### 💬 Messaging
+- 1:1 and group chats
+- Message requests (accept or delete) before opening a conversation
+- Conversation controls: mute/unmute, hide for yourself, or delete
+- Chat settings with:
+  - Rename chat
+  - Change group icon image
+  - Add or remove participants
+  - Shared media and link history with search
+- Message tab unread badge support
 
-### 🔍 Search Tab
-- Search for users, clubs, and courses
-- Access associated discussion boards
-- Quick navigation to profiles and details
+### 🔍 Search + Profiles
+- Search users, courses, clubs, and professors
+- Jump directly to detail pages and discussion contexts
+- Profile system with follow/unfollow and private-account request handling
+- User card with university branding, ranking, and activity context
 
-### 👤 User Tab
-- Beautiful ID card design with university branding
-- Display courses, clubs, and discussion rankings
-- Follow/unfollow system
-- Public/private account settings
-- Share profile via unique ID or share button
-
-### 🎨 Design Features
-- Light/Dark mode (defaults to device preference)
-- Instagram-like soft edge design with bubbles
-- University color scheme integration
-- Minimalistic yet informative UI
+### 🎨 Design System
+- Light, dark, and auto theme modes
+- University color integration across views
+- Mobile-first card-based UI built with Expo + React Native
 
 ## Tech Stack
 
@@ -75,7 +69,7 @@ A cross-platform mobile application that combines the best of Reddit and Instagr
 - Create discussions with title, content, tags
 - Associate with courses, professors, or clubs
 - Voting system (A for upvote, F for downvote)
-- Comments and replies
+- Threaded comments and replies
 - ML-powered ranking and sorting
 
 ### Private Course Sessions
@@ -87,6 +81,14 @@ A cross-platform mobile application that combines the best of Reddit and Instagr
 - When users submit courses/professors/clubs
 - Multiple submissions with similar names trigger review
 - Threshold-based automatic addition (no duplicates)
+
+### Catalog Admin + Data Pipeline
+- Local admin UI (`npm run catalog:ui`) for catalog operations
+- Config-driven catalog scraping (`scripts/scrape-catalog.mjs`) with:
+  - Section toggles (universities, courses, organizations, professors)
+  - Optional merge mode to preserve existing local catalog data
+  - Dry-run mode for safe validation
+- Firestore push utility (`scripts/catalog-push.mjs`) that fills missing fields without overwriting existing non-empty data
 
 ### Profile ID Card
 - Vertical card design
@@ -234,7 +236,6 @@ See [SETUP.md](./SETUP.md) for complete setup and build instructions.
 
 - [ ] Push notifications for messages and mentions
 - [ ] Advanced search with filters
-- [ ] Real-time discussion updates
 - [ ] Analytics and insights
 - [ ] Admin panel for university management
 - [ ] Integration with university systems
@@ -247,6 +248,9 @@ See [SETUP.md](./SETUP.md) for complete setup and build instructions.
 ![Course Page Simulator](assets/CoursePageSim.png)
 ![Organization Page Simulator](assets/OrgPageSim.png)
 ![Profile Page Simulator](assets/ProfilePageSim.png)
+![1 on 1 Chat Page Simulator](assets/1N1MessageSim.png)
+![Group Chat Page Simulator](assets/GroupMessageSim.png)
+![Professor Rating Page Simulator](assets/ProfRateSim.png)
 
 ## License
 
