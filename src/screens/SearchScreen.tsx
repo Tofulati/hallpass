@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import {
   View,
   Text,
@@ -6,6 +7,7 @@ import {
   TextInput,
   TouchableOpacity,
   ScrollView,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
@@ -37,6 +39,7 @@ export default function SearchScreen({ navigation }: any) {
     professors: [],
   });
   const [searching, setSearching] = useState(false);
+  const debouncedQuery = useDebouncedValue(searchQuery, 350);
   const [collapsedSections, setCollapsedSections] = useState<{
     users: boolean;
     courses: boolean;
@@ -49,50 +52,64 @@ export default function SearchScreen({ navigation }: any) {
     professors: true,
   });
 
-  const handleSearch = async () => {
-    if (!searchQuery.trim() || !userData?.university) {
+  useEffect(() => {
+    const q = debouncedQuery.trim();
+    if (!q || !userData?.university) {
       setResults({ users: [], courses: [], organizations: [], professors: [] });
+      setSearching(false);
       return;
     }
 
-    setSearching(true);
-    try {
-      const universityId = typeof userData.university === 'string' 
-        ? userData.university 
-        : userData.university.id;
+    let cancelled = false;
+    (async () => {
+      setSearching(true);
+      try {
+        const universityId =
+          typeof userData.university === 'string'
+            ? userData.university
+            : userData.university.id;
 
-      const [users, courses, organizations, professors] = await Promise.all([
-        DatabaseService.searchUsers(searchQuery, universityId),
-        DatabaseService.getCourses(universityId),
-        DatabaseService.getOrganizations(universityId),
-        DatabaseService.getProfessors(universityId, searchQuery),
-      ]);
+        const [users, courses, organizations, professors] = await Promise.all([
+          DatabaseService.searchUsers(q, universityId),
+          DatabaseService.getCourses(universityId),
+          DatabaseService.getOrganizations(universityId),
+          DatabaseService.getProfessors(universityId, q),
+        ]);
 
-      const filteredCourses = courses.filter(
-        c =>
-          c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          c.code.toLowerCase().includes(searchQuery.toLowerCase())
-      );
+        const qLower = q.toLowerCase();
+        const filteredCourses = courses.filter(
+          c =>
+            c.name.toLowerCase().includes(qLower) || c.code.toLowerCase().includes(qLower)
+        );
 
-      const filteredOrganizations = organizations.filter(
-        o =>
-          o.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          o.description?.toLowerCase().includes(searchQuery.toLowerCase())
-      );
+        const filteredOrganizations = organizations.filter(
+          o =>
+            o.name.toLowerCase().includes(qLower) ||
+            o.description?.toLowerCase().includes(qLower)
+        );
 
-      setResults({
-        users,
-        courses: filteredCourses,
-        organizations: filteredOrganizations,
-        professors,
-      });
-    } catch (error) {
-      console.error('Error searching:', error);
-      setResults({ users: [], courses: [], organizations: [], professors: [] });
-    } finally {
-      setSearching(false);
-    }
-  };
+        if (!cancelled) {
+          setResults({
+            users,
+            courses: filteredCourses,
+            organizations: filteredOrganizations,
+            professors,
+          });
+        }
+      } catch (error) {
+        console.error('Error searching:', error);
+        if (!cancelled) {
+          setResults({ users: [], courses: [], organizations: [], professors: [] });
+        }
+      } finally {
+        if (!cancelled) setSearching(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [debouncedQuery, userData]);
 
   const renderUser = (user: User) => (
     <TouchableOpacity
@@ -174,6 +191,10 @@ export default function SearchScreen({ navigation }: any) {
 
   const hasResults = results.users.length > 0 || results.courses.length > 0 || results.organizations.length > 0 || results.professors.length > 0;
 
+  const queryTrim = searchQuery.trim();
+  const debTrim = debouncedQuery.trim();
+  const pendingDebounce = queryTrim.length > 0 && queryTrim !== debTrim;
+
   const styles = createStyles(theme);
 
   return (
@@ -187,16 +208,12 @@ export default function SearchScreen({ navigation }: any) {
           placeholderTextColor={theme.colors.textSecondary}
           value={searchQuery}
           onChangeText={setSearchQuery}
-          onSubmitEditing={handleSearch}
           returnKeyType="search"
+          autoCorrect={false}
         />
-        <TouchableOpacity onPress={handleSearch} disabled={searching}>
-          <Ionicons
-            name="arrow-forward"
-            size={20}
-            color={searching ? theme.colors.textSecondary : theme.colors.primary}
-          />
-        </TouchableOpacity>
+        {searching || pendingDebounce ? (
+          <ActivityIndicator size="small" color={theme.colors.primary} style={{ marginLeft: 4 }} />
+        ) : null}
       </View>
 
       {/* Results */}

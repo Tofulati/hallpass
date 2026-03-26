@@ -121,6 +121,7 @@ export interface Discussion {
   content: string;
   images?: string[];
   tags: string[];
+  universityId?: string;
   courseId?: string;
   professorId?: string;
   clubId?: string;
@@ -128,6 +129,8 @@ export interface Discussion {
   upvotes: string[]; // User IDs who upvoted (A)
   downvotes: string[]; // User IDs who downvoted (F)
   comments: Comment[];
+  /** Threaded comments live in `discussions/{id}/comments`; keep a count on the discussion doc. */
+  commentCount?: number;
   score: number; // Calculated from upvotes/downvotes and ML ranking
   controversy: number; // ML calculated controversy score
   createdAt: Date;
@@ -142,19 +145,36 @@ export interface Comment {
   content: string;
   upvotes: string[];
   downvotes: string[];
+  images?: string[];
   replies?: Comment[];
   createdAt: Date;
 }
+
+export interface DiscussionComment {
+  id: string;
+  discussionId: string;
+  userId: string;
+  content: string;
+  parentId?: string | null;
+  images?: string[];
+  upvotes: string[];
+  downvotes: string[];
+  createdAt: Date;
+  updatedAt: Date;
+ }
 
 // Message Types
 export interface Message {
   id: string;
   senderId: string;
-  receiverId: string;
+  receiverId: string; // other user in DM; use 'group' for group chats
   content: string;
   images?: string[];
   read: boolean;
   createdAt: Date;
+  /** Set on message request thread messages for rule checks (request thread participants). */
+  threadFromUserId?: string;
+  threadToUserId?: string;
 }
 
 export interface Conversation {
@@ -162,6 +182,39 @@ export interface Conversation {
   participants: string[]; // User IDs
   lastMessage?: Message;
   updatedAt: Date;
+  createdAt?: Date;
+  isGroup?: boolean;
+  title?: string;
+  iconImage?: string;
+  /** User IDs who hid this thread (soft delete for that user only) */
+  hiddenFor?: string[];
+  /** User IDs who muted notifications for this thread */
+  mutedBy?: string[];
+  createdBy?: string;
+  /** Per-user last open timestamp for unread badges */
+  lastReadAt?: Record<string, Date>;
+}
+
+export type MessageRequestStatus = 'pending' | 'accepted' | 'declined';
+
+export interface MessageRequest {
+  id: string;
+  fromUserId: string;
+  toUserId: string;
+  status: MessageRequestStatus;
+  createdAt: Date;
+  updatedAt?: Date;
+  conversationId?: string;
+  lastMessage?: Message;
+}
+
+/** Pending follow when profile is private; Firestore doc id is fromUserId_toUserId. */
+export interface FollowRequest {
+  id: string;
+  fromUserId: string;
+  toUserId: string;
+  status: 'pending';
+  createdAt: Date;
 }
 
 // Filter and Sort Types

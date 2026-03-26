@@ -3,11 +3,27 @@ import {
   signInWithEmailAndPassword,
   signInWithCredential,
   GoogleAuthProvider,
+  EmailAuthProvider,
   signOut,
+  deleteUser,
+  reauthenticateWithCredential,
   User as FirebaseUser,
   updateProfile,
 } from 'firebase/auth';
-import { doc, setDoc, getDoc, updateDoc, arrayUnion, writeBatch } from 'firebase/firestore';
+import {
+  doc,
+  setDoc,
+  getDoc,
+  updateDoc,
+  arrayUnion,
+  writeBatch,
+  deleteDoc,
+  collection,
+  query,
+  where,
+  getDocs,
+  type DocumentReference,
+} from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
 import { User, OnboardingData } from '../types';
 
@@ -105,6 +121,72 @@ export class AuthService {
    */
   static getCurrentUser(): FirebaseUser | null {
     return auth.currentUser;
+  }
+
+  static hasPasswordProvider(user: FirebaseUser | null): boolean {
+    if (!user) return false;
+    return user.providerData.some((p) => p.providerId === 'password');
+  }
+
+  /**
+   * Remove the signed-in user's Firestore profile and closely related rows they own.
+   * Call while authenticated, before deleteUser().
+   */
+  static async deleteUserFirestoreData(userId: string): Promise<void> {
+    const refsToDelete: DocumentReference[] = [];
+
+    const verificationSnap = await getDocs(
+      query(collection(db, 'id_verifications'), where('userId', '==', userId))
+    );
+    verificationSnap.docs.forEach((d) => refsToDelete.push(d.ref));
+
+    const requestRefsById = new Map<string, DocumentReference>();
+    const fromReqSnap = await getDocs(
+      query(collection(db, 'message_requests'), where('fromUserId', '==', userId))
+    );
+    fromReqSnap.docs.forEach((d) => requestRefsById.set(d.id, d.ref));
+    const toReqSnap = await getDocs(
+      query(collection(db, 'message_requests'), where('toUserId', '==', userId))
+    );
+    toReqSnap.docs.forEach((d) => requestRefsById.set(d.id, d.ref));
+
+    for (const reqRef of requestRefsById.values()) {
+      const msgsSnap = await getDocs(collection(db, 'message_requests', reqRef.id, 'messages'));
+      msgsSnap.docs.forEach((m) => refsToDelete.push(m.ref));
+      refsToDelete.push(reqRef);
+    }
+
+    const BATCH_MAX = 450;
+    for (let i = 0; i < refsToDelete.length; i += BATCH_MAX) {
+      const chunk = refsToDelete.slice(i, i + BATCH_MAX);
+      const batch = writeBatch(db);
+      chunk.forEach((ref) => batch.delete(ref));
+      await batch.commit();
+    }
+
+    await deleteDoc(doc(db, 'users', userId));
+  }
+
+  static async deleteAccountWithPassword(password: string): Promise<void> {
+    const user = auth.currentUser;
+    if (!user) throw new Error('Not signed in');
+    const email = user.email;
+    if (!email) throw new Error('This account has no email; use Google sign-in to confirm deletion.');
+    const credential = EmailAuthProvider.credential(email, password);
+    await reauthenticateWithCredential(user, credential);
+    const uid = user.uid;
+    await AuthService.deleteUserFirestoreData(uid);
+    await deleteUser(user);
+  }
+
+  static async deleteAccountWithGoogle(idToken: string, accessToken: string): Promise<void> {
+    const user = auth.currentUser;
+    if (!user) throw new Error('Not signed in');
+    const credential = GoogleAuthProvider.credential(idToken, accessToken);
+    await reauthenticateWithCredential(user, credential);
+    const uid = auth.currentUser!.uid;
+    await AuthService.deleteUserFirestoreData(uid);
+    await deleteUser(auth.currentUser!);
   }
 
   /**

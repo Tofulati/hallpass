@@ -17,6 +17,7 @@ import { MLService } from '../services/mlService';
 import { Discussion, SortOption, University } from '../types';
 import DiscussionCard from '../components/DiscussionCard';
 import { Ionicons } from '@expo/vector-icons';
+import { useNotificationsBadgeCount } from '../hooks/useNotificationsBadgeCount';
 
 // Helper function to interpolate between two hex colors
 const interpolateColor = (color1: string, color2: string, factor: number): string => {
@@ -61,7 +62,8 @@ export default function BulletinScreen({ navigation }: any) {
   const [refreshing, setRefreshing] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [university, setUniversity] = useState<University | null>(null);
-  
+  const notificationsBadge = useNotificationsBadgeCount();
+
   // Create styles early so it's available for useMemo
   const styles = createStyles(theme, university);
   
@@ -104,12 +106,22 @@ export default function BulletinScreen({ navigation }: any) {
 
   const loadDiscussions = async () => {
     try {
-      // Get all discussions (general, course, and organization discussions)
-      // Filter out private course discussions unless user is enrolled
+      const universityId =
+        userData?.university == null
+          ? undefined
+          : typeof userData.university === 'string'
+            ? userData.university
+            : userData.university.id;
+      if (!universityId?.trim()) {
+        setDiscussions([]);
+        return;
+      }
+      const uni = universityId.trim();
+      // General, course, and org threads for this campus only
       const allDiscussions = await DatabaseService.getDiscussions(
-        {},
+        { universityId: uni },
         sortBy,
-        200 // Increased limit to get more discussions
+        200
       );
       
       // Filter private discussions - only show if user is enrolled in the course
@@ -195,6 +207,20 @@ export default function BulletinScreen({ navigation }: any) {
         <View style={styles.headerTitleContainer}>
           {hallPassLetters}
         </View>
+        <TouchableOpacity
+          style={styles.headerNotifButton}
+          onPress={() => navigation.navigate('Notifications')}
+          accessibilityLabel="Notifications"
+        >
+          <Ionicons name="notifications-outline" size={26} color={theme.colors.text} />
+          {notificationsBadge > 0 ? (
+            <View style={styles.headerNotifBadge}>
+              <Text style={styles.headerNotifBadgeText}>
+                {notificationsBadge > 99 ? '99+' : notificationsBadge}
+              </Text>
+            </View>
+          ) : null}
+        </TouchableOpacity>
       </View>
 
       {/* Search Bar */}
@@ -316,12 +342,39 @@ const createStyles = (theme: any, university: University | null) =>
       backgroundColor: theme.colors.background,
       alignItems: 'center',
       justifyContent: 'center',
+      position: 'relative',
     },
     headerTitleContainer: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
       width: '100%',
+    },
+    headerNotifButton: {
+      position: 'absolute',
+      right: 6,
+      top: 2,
+      width: 44,
+      height: 44,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    headerNotifBadge: {
+      position: 'absolute',
+      top: 4,
+      right: 2,
+      minWidth: 18,
+      height: 18,
+      borderRadius: 9,
+      backgroundColor: theme.colors.primary,
+      justifyContent: 'center',
+      alignItems: 'center',
+      paddingHorizontal: 4,
+    },
+    headerNotifBadgeText: {
+      color: '#fff',
+      fontSize: 10,
+      fontWeight: '700',
     },
     headerTitleLetter: {
       fontSize: 28,

@@ -15,6 +15,9 @@ import {
   Timestamp,
   QueryConstraint,
   arrayUnion,
+  arrayRemove,
+  onSnapshot,
+  increment,
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import {
@@ -27,10 +30,12 @@ import {
   Organization,
   Message,
   Conversation,
+  MessageRequest,
+  FollowRequest,
   SortOption,
-  FilterType,
   ProfessorRating,
   ClubRating,
+  DiscussionComment,
 } from '../types';
 
 export class DatabaseService {
@@ -76,6 +81,7 @@ export class DatabaseService {
         upvotes: discussion.upvotes || [],
         downvotes: discussion.downvotes || [],
         comments: discussion.comments || [],
+        commentCount: 0,
         score: 0,
         controversy: 0,
         isPrivate: discussion.isPrivate || false,
@@ -100,6 +106,9 @@ export class DatabaseService {
       if (discussion.clubId && typeof discussion.clubId === 'string' && discussion.clubId.trim()) {
         discussionData.clubId = discussion.clubId.trim();
       }
+      if (discussion.universityId && typeof discussion.universityId === 'string' && discussion.universityId.trim()) {
+        discussionData.universityId = discussion.universityId.trim();
+      }
 
       const docRef = await addDoc(collection(db, 'discussions'), discussionData);
       
@@ -121,6 +130,7 @@ export class DatabaseService {
 
   static async getDiscussions(
     filters?: {
+      universityId?: string;
       courseId?: string;
       professorId?: string;
       clubId?: string;
@@ -136,6 +146,9 @@ export class DatabaseService {
       const constraints: QueryConstraint[] = [];
 
       // Normalize filters to ensure consistent matching (trim whitespace)
+      if (filters?.universityId && typeof filters.universityId === 'string' && filters.universityId.trim()) {
+        constraints.push(where('universityId', '==', filters.universityId.trim()));
+      }
       if (filters?.courseId && typeof filters.courseId === 'string' && filters.courseId.trim()) {
         constraints.push(where('courseId', '==', filters.courseId.trim()));
       }
@@ -157,6 +170,7 @@ export class DatabaseService {
 
       // Check if we have any filters (not just constraints, since orderBy adds constraints)
       const hasFilters = filters && (
+        filters.universityId ||
         filters.courseId || 
         filters.professorId || 
         filters.clubId || 
@@ -170,20 +184,20 @@ export class DatabaseService {
       // To avoid index issues, we'll sort client-side when filtering
       // When filtering by courseId/organizationId (with or without isPrivate), we cannot use orderBy without a composite index
       let needsClientSort = false;
-      
-      // Check if we're filtering by courseId or organizationId
+
+      const universityFilterActive = !!(
+        filters?.universityId &&
+        typeof filters.universityId === 'string' &&
+        filters.universityId.trim()
+      );
+      // When filtering by course, org, or university, sort client-side to avoid composite indexes on orderBy.
       const isFilteringByCourseOrOrg = !!(filters?.courseId || filters?.organizationId);
-      
-      if (isFilteringByCourseOrOrg) {
-        // When filtering by courseId or organizationId (with or without isPrivate), sort client-side to avoid composite index
-        // Do NOT add orderBy here - it requires a composite index
+
+      if (isFilteringByCourseOrOrg || universityFilterActive) {
         needsClientSort = true;
-        // IMPORTANT: Do not add any orderBy constraints when filtering by courseId/organizationId
       } else {
-        // No courseId/organizationId filter - try server-side sorting
         switch (sortBy) {
           case 'popularity':
-            // Try to sort by score, but fallback to client-side if not available
             try {
               constraints.push(orderBy('score', 'desc'));
             } catch {
@@ -204,7 +218,7 @@ export class DatabaseService {
       }
 
       // Always add a limit, but use a higher limit when no filters (for bulletin/cross-posting)
-      // When no filters are provided, we want all discussions for cross-posting
+      // Unscoped global queries are not used (discussions are per university).
       const actualLimit = hasFilters ? limitCount : Math.max(limitCount, 500);
       constraints.push(limit(actualLimit));
 
@@ -214,6 +228,7 @@ export class DatabaseService {
       const hasCourseOrOrgFilter = !!(filters?.courseId || filters?.organizationId);
       console.log('Querying discussions:', {
         filters: {
+          universityId: filters?.universityId,
           courseId: filters?.courseId,
           organizationId: filters?.organizationId,
           isPrivate: filters?.isPrivate,
@@ -238,7 +253,7 @@ export class DatabaseService {
         throw error;
       }
       
-      let discussions = querySnapshot.docs.map(doc => {
+      const discussions = querySnapshot.docs.map(doc => {
         const data = doc.data();
         let createdAt = new Date();
         let updatedAt = new Date();
@@ -274,6 +289,12 @@ export class DatabaseService {
           upvotes: data.upvotes || [],
           downvotes: data.downvotes || [],
           comments: data.comments || [],
+          commentCount:
+            typeof data.commentCount === 'number'
+              ? data.commentCount
+              : Array.isArray(data.comments)
+                ? data.comments.length
+                : 0,
           score: data.score || 0,
           controversy: data.controversy || 0,
           createdAt,
@@ -282,6 +303,7 @@ export class DatabaseService {
           images: data.images || undefined,
           courseId: data.courseId || undefined,
           organizationId: data.organizationId || undefined,
+          universityId: data.universityId || undefined,
           professorId: data.professorId || undefined,
           clubId: data.clubId || undefined,
           isPrivate: data.isPrivate || false,
@@ -309,6 +331,167 @@ export class DatabaseService {
     } catch (error) {
       console.error('Error getting discussions:', error);
       return [];
+    }
+  }
+
+  static async getDiscussion(discussionId: string): Promise<Discussion | null> {
+    try {
+      const discussionRef = doc(db, 'discussions', discussionId);
+      const snap = await getDoc(discussionRef);
+      if (!snap.exists()) return null;
+      const data: any = snap.data();
+
+      const createdAt =
+        data.createdAt && typeof data.createdAt.toDate === 'function'
+          ? data.createdAt.toDate()
+          : data.createdAt instanceof Date
+            ? data.createdAt
+            : new Date(data.createdAt ?? Date.now());
+      const updatedAt =
+        data.updatedAt && typeof data.updatedAt.toDate === 'function'
+          ? data.updatedAt.toDate()
+          : data.updatedAt instanceof Date
+            ? data.updatedAt
+            : new Date(data.updatedAt ?? Date.now());
+
+      return {
+        id: snap.id,
+        userId: data.userId || '',
+        title: data.title || '',
+        content: data.content || '',
+        tags: data.tags || [],
+        upvotes: data.upvotes || [],
+        downvotes: data.downvotes || [],
+        comments: data.comments || [],
+        commentCount:
+          typeof data.commentCount === 'number'
+            ? data.commentCount
+            : Array.isArray(data.comments)
+              ? data.comments.length
+              : 0,
+        score: data.score || 0,
+        controversy: data.controversy || 0,
+        createdAt,
+        updatedAt,
+        images: data.images || undefined,
+        courseId: data.courseId || undefined,
+        organizationId: data.organizationId || undefined,
+        universityId: data.universityId || undefined,
+        professorId: data.professorId || undefined,
+        clubId: data.clubId || undefined,
+        isPrivate: data.isPrivate || false,
+        enrolledUsers: data.enrolledUsers || undefined,
+      } as Discussion;
+    } catch (error) {
+      console.error('Error getting discussion:', error);
+      return null;
+    }
+  }
+
+  static async getDiscussionComments(discussionId: string): Promise<DiscussionComment[]> {
+    try {
+      const commentsRef = collection(db, 'discussions', discussionId, 'comments');
+      const q = query(commentsRef, orderBy('createdAt', 'asc'), limit(5000));
+      const snap = await getDocs(q);
+      return snap.docs.map(d => {
+        const data: any = d.data();
+        const createdAt =
+          data.createdAt && typeof data.createdAt.toDate === 'function'
+            ? data.createdAt.toDate()
+            : data.createdAt instanceof Date
+              ? data.createdAt
+              : new Date(data.createdAt ?? Date.now());
+        const updatedAt =
+          data.updatedAt && typeof data.updatedAt.toDate === 'function'
+            ? data.updatedAt.toDate()
+            : data.updatedAt instanceof Date
+              ? data.updatedAt
+              : new Date(data.updatedAt ?? createdAt);
+
+        return {
+          id: d.id,
+          discussionId,
+          userId: data.userId || '',
+          content: data.content || '',
+          parentId: data.parentId ?? null,
+          images: data.images || undefined,
+          upvotes: data.upvotes || [],
+          downvotes: data.downvotes || [],
+          createdAt,
+          updatedAt,
+        } as DiscussionComment;
+      });
+    } catch (error) {
+      console.error('Error getting discussion comments:', error);
+      return [];
+    }
+  }
+
+  static async addDiscussionComment(params: {
+    discussionId: string;
+    userId: string;
+    content: string;
+    parentId?: string | null;
+    images?: string[];
+  }): Promise<string> {
+    try {
+      const { discussionId, userId, content, parentId, images } = params;
+      const commentData: any = {
+        userId,
+        content,
+        parentId: parentId ?? null,
+        upvotes: [],
+        downvotes: [],
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now(),
+      };
+      if (images && images.length > 0) {
+        commentData.images = images;
+      }
+
+      const commentsRef = collection(db, 'discussions', discussionId, 'comments');
+      const docRef = await addDoc(commentsRef, commentData);
+
+      // Keep a fast count on the discussion doc for lists/cards.
+      await updateDoc(doc(db, 'discussions', discussionId), {
+        commentCount: increment(1),
+        updatedAt: Timestamp.now(),
+      });
+
+      return docRef.id;
+    } catch (error) {
+      console.error('Error adding discussion comment:', error);
+      throw error;
+    }
+  }
+
+  static async voteDiscussionComment(params: {
+    discussionId: string;
+    commentId: string;
+    userId: string;
+    voteType: 'upvote' | 'downvote' | 'remove';
+  }): Promise<void> {
+    try {
+      const { discussionId, commentId, userId, voteType } = params;
+      const commentRef = doc(db, 'discussions', discussionId, 'comments', commentId);
+      const snap = await getDoc(commentRef);
+      if (!snap.exists()) throw new Error('Comment not found');
+      const data: any = snap.data();
+
+      const upvotes = [...(data.upvotes || [])].filter((id: string) => id !== userId);
+      const downvotes = [...(data.downvotes || [])].filter((id: string) => id !== userId);
+
+      if (voteType === 'upvote') upvotes.push(userId);
+      if (voteType === 'downvote') downvotes.push(userId);
+
+      await updateDoc(commentRef, {
+        upvotes,
+        downvotes,
+        updatedAt: Timestamp.now(),
+      });
+    } catch (error) {
+      console.error('Error voting on discussion comment:', error);
+      throw error;
     }
   }
 
@@ -717,21 +900,22 @@ export class DatabaseService {
       if (existingProf) {
         professorId = existingProf.id;
       } else {
-        // Create new professor with default max ratings
+        // Create new professor with default max ratings (omit email if missing — Firestore rejects undefined)
+        const trimmedEmail = email?.trim();
         const docRef = await addDoc(collection(db, 'professors'), {
           name: name.trim(),
-          email: email?.trim(),
           universityId,
           courses: [],
-        averageRating: {
-          totalRating: 5,
-          difficulty: 1,
-          enjoyment: 5,
-          retakePercentage: 100,
-          understandability: 5,
-        },
-        createdAt: Timestamp.now(),
-      });
+          averageRating: {
+            totalRating: 5,
+            difficulty: 1,
+            enjoyment: 5,
+            retakePercentage: 100,
+            understandability: 5,
+          },
+          createdAt: Timestamp.now(),
+          ...(trimmedEmail ? { email: trimmedEmail } : {}),
+        });
         professorId = docRef.id;
         isNewProfessor = true;
       }
@@ -1354,24 +1538,66 @@ export class DatabaseService {
   }
 
   // Message Operations
+  private static parseConversationDoc(id: string, data: Record<string, any>): Conversation {
+    const lastRaw = data.lastMessage;
+    const lastMessage = lastRaw
+      ? ({
+          ...lastRaw,
+          createdAt: lastRaw.createdAt?.toDate?.() || new Date(),
+        } as Message)
+      : undefined;
+
+    let lastReadAt: Record<string, Date> | undefined;
+    if (data.lastReadAt && typeof data.lastReadAt === 'object') {
+      lastReadAt = {};
+      for (const key of Object.keys(data.lastReadAt)) {
+        const t = data.lastReadAt[key];
+        lastReadAt[key] = t?.toDate?.() || new Date(0);
+      }
+    }
+
+    return {
+      id,
+      participants: data.participants || [],
+      lastMessage,
+      updatedAt: data.updatedAt?.toDate?.() || new Date(),
+      createdAt: data.createdAt?.toDate?.(),
+      isGroup: data.isGroup === true,
+      title: data.title || undefined,
+      iconImage: data.iconImage || undefined,
+      hiddenFor: data.hiddenFor || [],
+      mutedBy: data.mutedBy || [],
+      createdBy: data.createdBy,
+      lastReadAt,
+    };
+  }
+
   static async sendMessage(conversationId: string, message: Omit<Message, 'id' | 'createdAt'>): Promise<string> {
     try {
-      // Add message to conversation subcollection
+      const content = (message.content || '').trim();
+      const images = message.images || [];
+      if (!content && images.length === 0) {
+        throw new Error('Message must have text or images');
+      }
+
       const messageRef = collection(db, 'conversations', conversationId, 'messages');
       const docRef = await addDoc(messageRef, {
-        ...message,
+        senderId: message.senderId,
+        receiverId: message.receiverId,
+        content,
+        images,
         read: false,
         createdAt: Timestamp.now(),
       });
 
-      // Update conversation's lastMessage and updatedAt
       const conversationRef = doc(db, 'conversations', conversationId);
+      const preview = content || '📷 Photo';
       const lastMessageData = {
         id: docRef.id,
         senderId: message.senderId,
         receiverId: message.receiverId,
-        content: message.content,
-        images: message.images || [],
+        content: preview,
+        images,
         read: false,
         createdAt: Timestamp.now(),
       };
@@ -1395,15 +1621,615 @@ export class DatabaseService {
         orderBy('updatedAt', 'desc')
       );
       const querySnapshot = await getDocs(q);
-      return querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        updatedAt: doc.data().updatedAt?.toDate() || new Date(),
-      })) as Conversation[];
+      return querySnapshot.docs.map(d => DatabaseService.parseConversationDoc(d.id, d.data()));
     } catch (error) {
       console.error('Error getting conversations:', error);
       return [];
     }
+  }
+
+  static subscribeToConversations(
+    userId: string,
+    onUpdate: (items: Conversation[]) => void
+  ): () => void {
+    const q = query(
+      collection(db, 'conversations'),
+      where('participants', 'array-contains', userId),
+      orderBy('updatedAt', 'desc')
+    );
+    return onSnapshot(
+      q,
+      snap => {
+        const items = snap.docs.map(d => DatabaseService.parseConversationDoc(d.id, d.data()));
+        onUpdate(items);
+      },
+      err => console.error('Conversations subscription error:', err)
+    );
+  }
+
+  static async getConversation(conversationId: string): Promise<Conversation | null> {
+    try {
+      const ref = await getDoc(doc(db, 'conversations', conversationId));
+      if (!ref.exists()) return null;
+      return DatabaseService.parseConversationDoc(ref.id, ref.data() as Record<string, any>);
+    } catch (e) {
+      console.error('Error getConversation:', e);
+      return null;
+    }
+  }
+
+  static subscribeToMessages(
+    conversationId: string,
+    onUpdate: (items: Message[]) => void
+  ): () => void {
+    const q = query(
+      collection(db, 'conversations', conversationId, 'messages'),
+      orderBy('createdAt', 'asc')
+    );
+    return onSnapshot(
+      q,
+      snap => {
+        const items = snap.docs.map(d => ({
+          id: d.id,
+          ...d.data(),
+          createdAt: d.data().createdAt?.toDate?.() || new Date(),
+        })) as Message[];
+        onUpdate(items);
+      },
+      err => console.error('Messages subscription error:', err)
+    );
+  }
+
+  /**
+   * Direct DM (no message request) when:
+   * - Recipient is not strictly private (`isPrivate !== true`, including missing field), or
+   * - Either user follows the other (Instagram-style connection).
+   */
+  static messagingEligible(viewer: User, otherUserId: string, other: User | null): boolean {
+    if (!other) return false;
+    if (other.isPrivate !== true) return true;
+    // Only allow direct messages for private profiles if the viewer already follows them
+    // (i.e., the viewer's uid is present in the recipient's `followers` array).
+    const theirFollowers = other.followers || [];
+    return theirFollowers.includes(viewer.id);
+  }
+
+  private static followRequestDocId(fromUserId: string, toUserId: string): string {
+    return `${fromUserId}_${toUserId}`;
+  }
+
+  private static parseFollowRequestDoc(id: string, data: Record<string, any>): FollowRequest {
+    return {
+      id,
+      fromUserId: data.fromUserId,
+      toUserId: data.toUserId,
+      status: 'pending',
+      createdAt: data.createdAt?.toDate?.() || new Date(),
+    };
+  }
+
+  static async findPendingFollowRequest(fromUserId: string, toUserId: string): Promise<boolean> {
+    try {
+      const id = DatabaseService.followRequestDocId(fromUserId, toUserId);
+      const snap = await getDoc(doc(db, 'follow_requests', id));
+      return snap.exists() && snap.data()?.status === 'pending';
+    } catch (e) {
+      console.error('findPendingFollowRequest:', e);
+      return false;
+    }
+  }
+
+  /** Creates a pending request (private profiles). Idempotent if already pending. */
+  static async createOrEnsurePendingFollowRequest(fromUserId: string, toUserId: string): Promise<void> {
+    if (fromUserId === toUserId) return;
+    const id = DatabaseService.followRequestDocId(fromUserId, toUserId);
+    const ref = doc(db, 'follow_requests', id);
+    const snap = await getDoc(ref);
+    if (snap.exists() && snap.data()?.status === 'pending') return;
+    if (snap.exists()) {
+      throw new Error('A previous follow request was already handled.');
+    }
+    await setDoc(ref, {
+      fromUserId,
+      toUserId,
+      status: 'pending',
+      createdAt: Timestamp.now(),
+    });
+  }
+
+  static async deleteFollowRequestByPair(fromUserId: string, toUserId: string): Promise<void> {
+    const id = DatabaseService.followRequestDocId(fromUserId, toUserId);
+    await deleteDoc(doc(db, 'follow_requests', id));
+  }
+
+  static async getIncomingFollowRequests(userId: string): Promise<FollowRequest[]> {
+    try {
+      const q = query(
+        collection(db, 'follow_requests'),
+        where('toUserId', '==', userId),
+        where('status', '==', 'pending')
+      );
+      const snap = await getDocs(q);
+      const items = snap.docs.map(d => DatabaseService.parseFollowRequestDoc(d.id, d.data()));
+      items.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      return items;
+    } catch (e) {
+      console.error('getIncomingFollowRequests:', e);
+      return [];
+    }
+  }
+
+  static subscribeToIncomingFollowRequests(
+    userId: string,
+    onUpdate: (items: FollowRequest[]) => void
+  ): () => void {
+    const q = query(
+      collection(db, 'follow_requests'),
+      where('toUserId', '==', userId),
+      where('status', '==', 'pending')
+    );
+    return onSnapshot(
+      q,
+      snap => {
+        const items = snap.docs.map(d => DatabaseService.parseFollowRequestDoc(d.id, d.data()));
+        items.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+        onUpdate(items);
+      },
+      err => console.error('Follow requests subscription:', err)
+    );
+  }
+
+  /**
+   * Recipient accepts: add follow relationship and remove the request.
+   * Requires rules allowing recipient to update requester's `following`.
+   */
+  static async acceptFollowRequest(requestId: string, recipientUserId: string): Promise<void> {
+    const ref = doc(db, 'follow_requests', requestId);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) throw new Error('Follow request not found');
+    const data = snap.data();
+    if (data.status !== 'pending') throw new Error('Request is no longer pending');
+    const fromUserId = data.fromUserId as string;
+    const toUserId = data.toUserId as string;
+    if (toUserId !== recipientUserId) throw new Error('Not allowed');
+
+    const fromRef = doc(db, 'users', fromUserId);
+    const toRef = doc(db, 'users', toUserId);
+    const batch = writeBatch(db);
+    batch.update(fromRef, {
+      following: arrayUnion(toUserId),
+      updatedAt: Timestamp.now(),
+    });
+    batch.update(toRef, {
+      followers: arrayUnion(fromUserId),
+      updatedAt: Timestamp.now(),
+    });
+    batch.delete(ref);
+    await batch.commit();
+  }
+
+  static async declineFollowRequest(requestId: string, recipientUserId: string): Promise<void> {
+    const ref = doc(db, 'follow_requests', requestId);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return;
+    const data = snap.data();
+    if (data.toUserId !== recipientUserId) throw new Error('Not allowed');
+    await deleteDoc(ref);
+  }
+
+  private static parseMessageRequestDoc(id: string, data: Record<string, any>): MessageRequest {
+    const lastRaw = data.lastMessage;
+    const lastMessage = lastRaw
+      ? ({
+          ...lastRaw,
+          createdAt: lastRaw.createdAt?.toDate?.() || new Date(),
+        } as Message)
+      : undefined;
+    return {
+      id,
+      fromUserId: data.fromUserId,
+      toUserId: data.toUserId,
+      status: data.status,
+      createdAt: data.createdAt?.toDate?.() || new Date(),
+      updatedAt: data.updatedAt?.toDate?.(),
+      conversationId: data.conversationId,
+      lastMessage,
+    };
+  }
+
+  /** Pending request thread from sender to recipient (for messaging before follow). */
+  static async findPendingMessageRequest(
+    fromUserId: string,
+    toUserId: string
+  ): Promise<string | null> {
+    try {
+      const q = query(
+        collection(db, 'message_requests'),
+        where('fromUserId', '==', fromUserId),
+        where('toUserId', '==', toUserId),
+        where('status', '==', 'pending'),
+        limit(1)
+      );
+      const snap = await getDocs(q);
+      return snap.empty ? null : snap.docs[0].id;
+    } catch (e) {
+      console.error('findPendingMessageRequest:', e);
+      return null;
+    }
+  }
+
+  static async getOrCreatePendingMessageRequest(fromUserId: string, toUserId: string): Promise<string> {
+    const existing = await DatabaseService.findPendingMessageRequest(fromUserId, toUserId);
+    if (existing) return existing;
+    const d = await addDoc(collection(db, 'message_requests'), {
+      fromUserId,
+      toUserId,
+      status: 'pending',
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    });
+    return d.id;
+  }
+
+  static async sendMessageOnRequest(
+    requestId: string,
+    message: Omit<Message, 'id' | 'createdAt'>
+  ): Promise<string> {
+    const content = (message.content || '').trim();
+    const images = message.images || [];
+    if (!content && images.length === 0) {
+      throw new Error('Message must have text or images');
+    }
+
+    const reqRef = doc(db, 'message_requests', requestId);
+    const reqSnap = await getDoc(reqRef);
+    if (!reqSnap.exists()) throw new Error('Message request not found');
+    const threadFromUserId = reqSnap.data().fromUserId as string;
+    const threadToUserId = reqSnap.data().toUserId as string;
+
+    const msgCol = collection(db, 'message_requests', requestId, 'messages');
+    const docRef = await addDoc(msgCol, {
+      senderId: message.senderId,
+      receiverId: message.receiverId,
+      content,
+      images,
+      read: false,
+      createdAt: Timestamp.now(),
+      threadFromUserId,
+      threadToUserId,
+    });
+
+    const preview = content || '📷 Photo';
+    await updateDoc(reqRef, {
+      lastMessage: {
+        id: docRef.id,
+        senderId: message.senderId,
+        receiverId: message.receiverId,
+        content: preview,
+        images,
+        read: false,
+        createdAt: Timestamp.now(),
+      },
+      updatedAt: Timestamp.now(),
+    });
+
+    return docRef.id;
+  }
+
+  static subscribeToRequestMessages(
+    requestId: string,
+    onUpdate: (items: Message[]) => void
+  ): () => void {
+    const q = query(
+      collection(db, 'message_requests', requestId, 'messages'),
+      orderBy('createdAt', 'asc')
+    );
+    return onSnapshot(
+      q,
+      snap => {
+        const items = snap.docs.map(d => ({
+          id: d.id,
+          ...d.data(),
+          createdAt: d.data().createdAt?.toDate?.() || new Date(),
+        })) as Message[];
+        onUpdate(items);
+      },
+      err => console.error('Request messages subscription:', err)
+    );
+  }
+
+  private static sortMessageRequestsByRecent(a: MessageRequest, b: MessageRequest): number {
+    const ta = (a.updatedAt || a.lastMessage?.createdAt || a.createdAt).getTime();
+    const tb = (b.updatedAt || b.lastMessage?.createdAt || b.createdAt).getTime();
+    return tb - ta;
+  }
+
+  static async getIncomingMessageRequests(userId: string): Promise<MessageRequest[]> {
+    try {
+      const q = query(
+        collection(db, 'message_requests'),
+        where('toUserId', '==', userId),
+        where('status', '==', 'pending')
+      );
+      const snap = await getDocs(q);
+      const items = snap.docs.map(d => DatabaseService.parseMessageRequestDoc(d.id, d.data()));
+      items.sort(DatabaseService.sortMessageRequestsByRecent);
+      return items;
+    } catch (e) {
+      console.error('getIncomingMessageRequests:', e);
+      return [];
+    }
+  }
+
+  static subscribeToIncomingMessageRequests(
+    userId: string,
+    onUpdate: (items: MessageRequest[]) => void
+  ): () => void {
+    const q = query(
+      collection(db, 'message_requests'),
+      where('toUserId', '==', userId),
+      where('status', '==', 'pending')
+    );
+    return onSnapshot(
+      q,
+      snap => {
+        const items = snap.docs.map(d => DatabaseService.parseMessageRequestDoc(d.id, d.data()));
+        items.sort(DatabaseService.sortMessageRequestsByRecent);
+        onUpdate(items);
+      },
+      err => console.error('Message requests subscription:', err)
+    );
+  }
+
+  /** Copy request thread into a normal conversation, then remove the request. */
+  static async acceptMessageRequest(requestId: string): Promise<string> {
+    const ref = doc(db, 'message_requests', requestId);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) throw new Error('Request not found');
+    const data = snap.data();
+    if (data.status !== 'pending') throw new Error('Request is no longer pending');
+
+    const fromUserId = data.fromUserId as string;
+    const toUserId = data.toUserId as string;
+
+    // Accepting a message request should not require approving a follow request.
+    // The whole point is: recipient can move from "request" to "inbox" without following.
+
+    const msgsSnap = await getDocs(
+      query(
+        collection(db, 'message_requests', requestId, 'messages'),
+        orderBy('createdAt', 'asc')
+      )
+    );
+
+    // IMPORTANT: query must be anchored to the accepting user (toUserId),
+    // otherwise Firestore will reject the query by security rules.
+    const conversationId = await DatabaseService.getOrCreateConversation(toUserId, fromUserId);
+
+    for (const m of msgsSnap.docs) {
+      const md = m.data();
+      await addDoc(collection(db, 'conversations', conversationId, 'messages'), {
+        senderId: md.senderId,
+        receiverId: md.receiverId,
+        content: md.content || '',
+        images: md.images || [],
+        read: false,
+        createdAt: md.createdAt || Timestamp.now(),
+      });
+    }
+
+    const last = msgsSnap.docs.length
+      ? msgsSnap.docs[msgsSnap.docs.length - 1].data()
+      : null;
+    if (last) {
+      const preview = (last.content || '').trim() || '📷 Photo';
+      await updateDoc(doc(db, 'conversations', conversationId), {
+        lastMessage: {
+          id: msgsSnap.docs[msgsSnap.docs.length - 1].id,
+          senderId: last.senderId,
+          receiverId: last.receiverId,
+          content: preview,
+          images: last.images || [],
+          read: false,
+          createdAt: last.createdAt || Timestamp.now(),
+        },
+        updatedAt: Timestamp.now(),
+      });
+    }
+
+    for (const m of msgsSnap.docs) {
+      await deleteDoc(m.ref);
+    }
+    await deleteDoc(ref);
+
+    return conversationId;
+  }
+
+  /** Delete a pending request and all of its messages (decline / trash). */
+  static async deleteMessageRequest(requestId: string): Promise<void> {
+    const msgsSnap = await getDocs(collection(db, 'message_requests', requestId, 'messages'));
+    for (const m of msgsSnap.docs) {
+      await deleteDoc(m.ref);
+    }
+    await deleteDoc(doc(db, 'message_requests', requestId));
+  }
+
+  static async declineMessageRequest(requestId: string): Promise<void> {
+    await DatabaseService.deleteMessageRequest(requestId);
+  }
+
+  static async createGroupConversation(creatorId: string, otherUserIds: string[]): Promise<string> {
+    const unique = [...new Set([creatorId, ...otherUserIds])];
+    if (unique.length < 2) throw new Error('Select at least one other person');
+    const participants = unique.sort();
+    const docRef = await addDoc(collection(db, 'conversations'), {
+      participants,
+      isGroup: true,
+      createdBy: creatorId,
+      lastMessage: null,
+      updatedAt: Timestamp.now(),
+      createdAt: Timestamp.now(),
+      hiddenFor: [],
+      mutedBy: [],
+    });
+    return docRef.id;
+  }
+
+  static async addParticipantsToConversation(
+    conversationId: string,
+    actorId: string,
+    newUserIds: string[]
+  ): Promise<void> {
+    if (newUserIds.length === 0) return;
+
+    const convRef = doc(db, 'conversations', conversationId);
+    const convSnap = await getDoc(convRef);
+    if (!convSnap.exists()) throw new Error('Conversation not found');
+    const conv = convSnap.data();
+    const participants: string[] = conv.participants || [];
+    if (!participants.includes(actorId)) throw new Error('Not a participant');
+
+    const actor = await DatabaseService.getUser(actorId);
+    if (!actor) throw new Error('User not found');
+
+    for (const uid of newUserIds) {
+      if (participants.includes(uid)) continue;
+      const other = await DatabaseService.getUser(uid);
+      if (!DatabaseService.messagingEligible(actor, uid, other)) {
+        throw new Error(
+          'You can only add people you follow or who follow you. Send a message request from their profile first.'
+        );
+      }
+    }
+
+    const merged = [...new Set([...participants, ...newUserIds])];
+    await updateDoc(convRef, {
+      participants: merged,
+      isGroup: merged.length > 2,
+      updatedAt: Timestamp.now(),
+    });
+  }
+
+  static async setConversationTitle(
+    conversationId: string,
+    actorId: string,
+    title: string
+  ): Promise<void> {
+    const trimmed = (title || '').trim();
+    const ref = doc(db, 'conversations', conversationId);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) throw new Error('Conversation not found');
+    const conv = snap.data();
+    const participants: string[] = conv?.participants || [];
+    if (!participants.includes(actorId)) throw new Error('Not a participant');
+
+    // Store empty string to "unset" the override (parseConversationDoc maps '' -> undefined).
+    await updateDoc(ref, {
+      title: trimmed,
+      updatedAt: Timestamp.now(),
+    });
+  }
+
+  static async setConversationIconImage(
+    conversationId: string,
+    actorId: string,
+    iconImageUrl: string
+  ): Promise<void> {
+    const ref = doc(db, 'conversations', conversationId);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) throw new Error('Conversation not found');
+    const conv = snap.data();
+    const participants: string[] = conv?.participants || [];
+    if (!participants.includes(actorId)) throw new Error('Not a participant');
+
+    const trimmed = (iconImageUrl || '').trim();
+    await updateDoc(ref, {
+      iconImage: trimmed,
+      updatedAt: Timestamp.now(),
+    });
+  }
+
+  static async kickParticipantFromConversation(
+    conversationId: string,
+    actorId: string,
+    userIdToKick: string
+  ): Promise<void> {
+    if (!userIdToKick) throw new Error('No user selected');
+    if (userIdToKick === actorId) throw new Error('Cannot kick yourself');
+
+    const convRef = doc(db, 'conversations', conversationId);
+    const convSnap = await getDoc(convRef);
+    if (!convSnap.exists()) throw new Error('Conversation not found');
+    const conv = convSnap.data();
+    const participants: string[] = conv?.participants || [];
+    if (!participants.includes(actorId)) throw new Error('Not a participant');
+    if (!participants.includes(userIdToKick)) throw new Error('User not in conversation');
+
+    const remaining = participants.filter(id => id !== userIdToKick);
+
+    // If this would leave a 1:1 conversation with no other participant, delete the chat.
+    if (remaining.length < 2) {
+      await DatabaseService.deleteConversation(conversationId, actorId);
+      return;
+    }
+
+    await updateDoc(convRef, {
+      participants: remaining,
+      isGroup: remaining.length > 2,
+      updatedAt: Timestamp.now(),
+    });
+  }
+
+  static async deleteConversation(
+    conversationId: string,
+    actorId: string
+  ): Promise<void> {
+    const convRef = doc(db, 'conversations', conversationId);
+    const convSnap = await getDoc(convRef);
+    if (!convSnap.exists()) return;
+
+    const conv = convSnap.data();
+    const participants: string[] = conv?.participants || [];
+    if (!participants.includes(actorId)) throw new Error('Not a participant');
+
+    // Delete messages first, then the conversation doc (rules for message subcollections depend on the conversation existing).
+    const msgsSnap = await getDocs(collection(db, 'conversations', conversationId, 'messages'));
+    const docs = msgsSnap.docs;
+    const chunkSize = 400;
+
+    for (let i = 0; i < docs.length; i += chunkSize) {
+      const chunk = docs.slice(i, i + chunkSize);
+      const batch = writeBatch(db);
+      chunk.forEach(d => batch.delete(d.ref));
+      await batch.commit();
+    }
+
+    await deleteDoc(convRef);
+  }
+
+  static async setConversationMuted(
+    conversationId: string,
+    userId: string,
+    muted: boolean
+  ): Promise<void> {
+    const ref = doc(db, 'conversations', conversationId);
+    if (muted) {
+      await updateDoc(ref, { mutedBy: arrayUnion(userId) });
+    } else {
+      await updateDoc(ref, { mutedBy: arrayRemove(userId) });
+    }
+  }
+
+  static async hideConversationForUser(conversationId: string, userId: string): Promise<void> {
+    await updateDoc(doc(db, 'conversations', conversationId), {
+      hiddenFor: arrayUnion(userId),
+    });
+  }
+
+  static async markConversationRead(conversationId: string, userId: string): Promise<void> {
+    await updateDoc(doc(db, 'conversations', conversationId), {
+      [`lastReadAt.${userId}`]: Timestamp.now(),
+    });
   }
 
   static async getOrCreateConversation(userId1: string, userId2: string): Promise<string> {
@@ -1430,9 +2256,12 @@ export class DatabaseService {
       const participants = [userId1, userId2].sort(); // Sort for consistency
       const docRef = await addDoc(collection(db, 'conversations'), {
         participants,
+        isGroup: false,
         lastMessage: null,
         updatedAt: Timestamp.now(),
         createdAt: Timestamp.now(),
+        hiddenFor: [],
+        mutedBy: [],
       });
       return docRef.id;
     } catch (error) {
@@ -1489,15 +2318,10 @@ export class DatabaseService {
     try {
       const followerRef = doc(db, 'users', followerId);
       const followingRef = doc(db, 'users', followingId);
-      
-      const followerDoc = await getDoc(followerRef);
-      const followingDoc = await getDoc(followingRef);
-      
-      const followerFollowing = [...(followerDoc.data()?.following || []), followingId];
-      const followingFollowers = [...(followingDoc.data()?.followers || []), followerId];
-      
-      await updateDoc(followerRef, { following: followerFollowing });
-      await updateDoc(followingRef, { followers: followingFollowers });
+
+      // Use atomic array ops so repeated taps do not create invalid state.
+      await updateDoc(followerRef, { following: arrayUnion(followingId) });
+      await updateDoc(followingRef, { followers: arrayUnion(followerId) });
     } catch (error) {
       console.error('Error following user:', error);
       throw error;
@@ -1508,19 +2332,10 @@ export class DatabaseService {
     try {
       const followerRef = doc(db, 'users', followerId);
       const followingRef = doc(db, 'users', followingId);
-      
-      const followerDoc = await getDoc(followerRef);
-      const followingDoc = await getDoc(followingRef);
-      
-      const followerFollowing = (followerDoc.data()?.following || []).filter(
-        (id: string) => id !== followingId
-      );
-      const followingFollowers = (followingDoc.data()?.followers || []).filter(
-        (id: string) => id !== followerId
-      );
-      
-      await updateDoc(followerRef, { following: followerFollowing });
-      await updateDoc(followingRef, { followers: followingFollowers });
+
+      // Use atomic array ops so removals are safe even if data is stale locally.
+      await updateDoc(followerRef, { following: arrayRemove(followingId) });
+      await updateDoc(followingRef, { followers: arrayRemove(followerId) });
     } catch (error) {
       console.error('Error unfollowing user:', error);
       throw error;

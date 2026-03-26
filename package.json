@@ -8,13 +8,17 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "lint": "eslint . --ext .ts,.tsx",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "catalog:ui": "node scripts/catalog-admin.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.490.0",
+    "@aws-sdk/client-sts": "^3.1017.0",
     "@aws-sdk/s3-request-presigner": "^3.490.0",
     "@expo/vector-icons": "^14.0.0",
+    "@peculiar/webcrypto": "^1.5.0",
     "@react-native-async-storage/async-storage": "1.21.0",
+    "@react-native-masked-view/masked-view": "0.3.1",
     "@react-navigation/bottom-tabs": "^6.5.11",
     "@react-navigation/native": "^6.1.9",
     "@react-navigation/native-stack": "^6.9.17",
@@ -30,7 +34,7 @@
     "expo-linear-gradient": "~12.7.0",
     "expo-status-bar": "~1.11.1",
     "expo-web-browser": "~13.0.3",
-    "@react-native-masked-view/masked-view": "0.3.1",
+    "express": "^5.2.1",
     "firebase": "^10.7.1",
     "react": "18.2.0",
     "react-native": "0.73.0",
@@ -48,8 +52,10 @@
     "@types/react-native": "~0.73.0",
     "@typescript-eslint/eslint-plugin": "^6.15.0",
     "@typescript-eslint/parser": "^6.15.0",
+    "cheerio": "^1.2.0",
     "eslint": "^8.56.0",
     "eslint-config-expo": "^7.0.0",
+    "firebase-admin": "^13.7.0",
     "typescript": "^5.3.3"
   },
   "private": true

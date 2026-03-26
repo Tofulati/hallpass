@@ -7,7 +7,6 @@
  */
 
 import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 const S3_CONFIG = {
   region: process.env.EXPO_PUBLIC_AWS_REGION || 'us-east-1',
@@ -43,6 +42,9 @@ export class S3Service {
       ContentType: contentType,
     });
 
+    // Lazy-load so React Native/Expo bundlers don't eagerly pull crypto-dependent code
+    // unless this function is actually used.
+    const { getSignedUrl } = await import('@aws-sdk/s3-request-presigner');
     const presignedUrl = await getSignedUrl(s3Client, command, { expiresIn });
     const url = `https://${S3_CONFIG.bucket}.s3.${S3_CONFIG.region}.amazonaws.com/${key}`;
 
@@ -85,7 +87,13 @@ export class S3Service {
     });
 
     if (!uploadResponse.ok) {
-      throw new Error(`Failed to upload to S3: ${uploadResponse.statusText}`);
+      // Read response body if available to help debug S3 errors (e.g. AccessDenied, InvalidRequest).
+      const responseText = await uploadResponse.text().catch(() => '');
+      throw new Error(
+        `Failed to upload to S3: ${uploadResponse.status} ${uploadResponse.statusText}${
+          responseText ? ` - ${responseText.slice(0, 200)}` : ''
+        }`
+      );
     }
   }
 
@@ -125,7 +133,7 @@ export class S3Service {
     const command = new PutObjectCommand({
       Bucket: S3_CONFIG.bucket,
       Key: key,
-      Body: arrayBuffer,
+      Body: new Uint8Array(arrayBuffer),
       ContentType: contentType,
     });
 

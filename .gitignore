@@ -77,12 +77,17 @@ eas-build-*.json
 # TypeScript
 *.tsbuildinfo
 
+# Local Firestore catalog seed (copy from scripts/onboarding-catalog.sample.json)
+scripts/onboarding-catalog.json
+scripts/scraper-config.json
+
 # Firebase
 firebase-debug.log
 firestore-debug.log
 ui-debug.log
 .firebase/
 firebase-export-*.json
+firestore.*
 
 # Metro bundler
 .metro-health-check*
@@ -132,3 +137,6 @@ pnpm-debug.log*
 
 # Note: SETUP.md is NOT ignored - it's useful documentation
 # If you have sensitive setup info, create SETUP_PRIVATE.md and add it here
+
+server.js
+cors.json

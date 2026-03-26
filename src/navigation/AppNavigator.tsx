@@ -5,9 +5,11 @@ import { createStackNavigator } from '@react-navigation/stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
+import { useMessageTabBadgeCount } from '../hooks/useMessageTabBadgeCount';
 
 // Screens
 import BulletinScreen from '../screens/BulletinScreen';
+import NotificationsScreen from '../screens/NotificationsScreen';
 import CourseScreen from '../screens/CourseScreen';
 import ClubsScreen from '../screens/ClubsScreen';
 import MessageScreen from '../screens/MessageScreen';
@@ -19,9 +21,13 @@ import ClubDetailScreen from '../screens/ClubDetailScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import ChatScreen from '../screens/ChatScreen';
+import NewMessageScreen from '../screens/NewMessageScreen';
+import AddChatParticipantsScreen from '../screens/AddChatParticipantsScreen';
+import ChatSettingsScreen from '../screens/ChatSettingsScreen';
 import ProfessorDetailScreen from '../screens/ProfessorDetailScreen';
 import CreateProfessorRatingScreen from '../screens/CreateProfessorRatingScreen';
 import RequestProfessorScreen from '../screens/RequestProfessorScreen';
+import DiscussionDetailScreen from '../screens/DiscussionDetailScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -38,6 +44,11 @@ const BulletinStack = () => (
       component={CreateDiscussionScreen}
       options={{ title: 'Create Discussion' }}
     />
+    <Stack.Screen
+      name="DiscussionDetail"
+      component={DiscussionDetailScreen}
+      options={{ headerShown: false }}
+    />
     <Stack.Screen 
       name="ProfessorDetail" 
       component={ProfessorDetailScreen}
@@ -47,6 +58,11 @@ const BulletinStack = () => (
       name="CreateProfessorRating" 
       component={CreateProfessorRatingScreen}
       options={{ title: 'Rate Professor' }}
+    />
+    <Stack.Screen
+      name="Notifications"
+      component={NotificationsScreen}
+      options={{ headerShown: false }}
     />
   </Stack.Navigator>
 );
@@ -67,6 +83,11 @@ const CourseStack = () => (
       name="CreateDiscussion" 
       component={CreateDiscussionScreen}
       options={{ title: 'Create Discussion' }}
+    />
+    <Stack.Screen
+      name="DiscussionDetail"
+      component={DiscussionDetailScreen}
+      options={{ headerShown: false }}
     />
     <Stack.Screen 
       name="Profile" 
@@ -108,6 +129,11 @@ const ClubsStack = () => (
       component={CreateDiscussionScreen}
       options={{ title: 'Create Discussion' }}
     />
+    <Stack.Screen
+      name="DiscussionDetail"
+      component={DiscussionDetailScreen}
+      options={{ headerShown: false }}
+    />
     <Stack.Screen 
       name="Profile" 
       component={ProfileScreen}
@@ -127,6 +153,21 @@ const MessageStack = () => (
       name="Chat" 
       component={ChatScreen}
       options={{ title: 'Chat' }}
+    />
+    <Stack.Screen
+      name="NewMessage"
+      component={NewMessageScreen}
+      options={{ headerShown: false }}
+    />
+    <Stack.Screen
+      name="AddChatParticipants"
+      component={AddChatParticipantsScreen}
+      options={{ headerShown: false }}
+    />
+    <Stack.Screen
+      name="ChatSettings"
+      component={ChatSettingsScreen}
+      options={{ title: 'Chat Info' }}
     />
     <Stack.Screen 
       name="Profile" 
@@ -193,12 +234,28 @@ const UserStack = () => (
 
 export default function AppNavigator() {
   const { theme } = useTheme();
+  const messageBadgeCount = useMessageTabBadgeCount();
 
   return (
     <SafeAreaProvider>
       <NavigationContainer>
         <Tab.Navigator
           screenOptions={({ route }) => ({
+            tabBarBadge:
+              route.name === 'Message' && messageBadgeCount > 0
+                ? messageBadgeCount > 99
+                  ? '99+'
+                  : messageBadgeCount
+                : undefined,
+            tabBarBadgeStyle:
+              route.name === 'Message' && messageBadgeCount > 0
+                ? {
+                    backgroundColor: theme.colors.primary,
+                    color: '#fff',
+                    fontSize: 11,
+                    fontWeight: '700' as const,
+                  }
+                : undefined,
             tabBarIcon: ({ focused, color, size }) => {
               let iconName: keyof typeof Ionicons.glyphMap;
 

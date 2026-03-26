@@ -18,6 +18,26 @@ export default function DiscussionCard({ discussion, navigation }: DiscussionCar
   const [upvoted, setUpvoted] = useState(false);
   const [downvoted, setDownvoted] = useState(false);
   const [associationName, setAssociationName] = useState<string | null>(null);
+  const [author, setAuthor] = useState<{ name: string; profileImage?: string; username?: string } | null>(
+    null
+  );
+
+  const getInitials = (name?: string) => {
+    const n = (name || '').trim();
+    if (!n) return '?';
+    return n
+      .split(/\s+/)
+      .slice(0, 2)
+      .map(p => p[0]?.toUpperCase())
+      .join('');
+  };
+
+  const navigateToUserProfile = (userIdToNavigate?: string) => {
+    if (!userIdToNavigate?.trim()) return;
+    navigation
+      ?.getParent?.()
+      ?.navigate?.('User', { screen: 'Profile', params: { userId: userIdToNavigate } });
+  };
 
   useEffect(() => {
     if (user) {
@@ -54,6 +74,32 @@ export default function DiscussionCard({ discussion, navigation }: DiscussionCar
 
     loadAssociationName();
   }, [discussion.courseId, discussion.organizationId]);
+
+  useEffect(() => {
+    let mounted = true;
+    const loadAuthor = async () => {
+      if (!discussion.userId?.trim()) {
+        if (mounted) setAuthor(null);
+        return;
+      }
+      try {
+        const u: any = await DatabaseService.getUser(discussion.userId.trim());
+        if (!mounted) return;
+        setAuthor(
+          u
+            ? { name: u.name || 'Unknown', profileImage: u.profileImage, username: u.username }
+            : null
+        );
+      } catch (e) {
+        console.error('Error loading discussion author:', e);
+      }
+    };
+
+    loadAuthor();
+    return () => {
+      mounted = false;
+    };
+  }, [discussion.userId]);
 
   const handleVote = async (type: 'upvote' | 'downvote') => {
     if (!user) return;
@@ -100,6 +146,28 @@ export default function DiscussionCard({ discussion, navigation }: DiscussionCar
       activeOpacity={0.7}
     >
       <View style={styles.header}>
+        <TouchableOpacity
+          style={styles.authorRow}
+          onPress={(e: any) => {
+            e?.stopPropagation?.();
+            navigateToUserProfile(discussion.userId);
+          }}
+          activeOpacity={0.7}
+        >
+          <View style={styles.avatarWrap}>
+            {author?.profileImage ? (
+              <Image source={{ uri: author.profileImage }} style={styles.avatarImg} />
+            ) : (
+              <View style={styles.avatarFallback}>
+                <Text style={styles.avatarFallbackText}>{getInitials(author?.name)}</Text>
+              </View>
+            )}
+          </View>
+          <Text style={styles.authorName} numberOfLines={1}>
+            {author?.name || 'Unknown'}
+          </Text>
+        </TouchableOpacity>
+
         <Text style={styles.title}>{discussion.title}</Text>
         {associationName && (
           <View style={styles.associationBadge}>
@@ -188,7 +256,11 @@ export default function DiscussionCard({ discussion, navigation }: DiscussionCar
 
         <View style={styles.metaContainer}>
           <Ionicons name="chatbubble-outline" size={16} color={theme.colors.textSecondary} />
-          <Text style={styles.metaText}>{discussion.comments.length}</Text>
+          <Text style={styles.metaText}>
+            {typeof discussion.commentCount === 'number'
+              ? discussion.commentCount
+              : discussion.comments.length}
+          </Text>
           <Text style={styles.metaText}>•</Text>
           <Text style={styles.metaText}>
             {formatDistanceToNow(discussion.createdAt, { addSuffix: true })}
@@ -211,6 +283,46 @@ const createStyles = (theme: any) =>
     },
     header: {
       marginBottom: 8,
+    },
+    authorRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginBottom: 6,
+    },
+    avatarWrap: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      overflow: 'hidden',
+      backgroundColor: theme.colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    avatarImg: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+    },
+    avatarFallback: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.colors.primary + '25',
+    },
+    avatarFallbackText: {
+      fontSize: 11,
+      fontWeight: '800',
+      color: theme.colors.primary,
+    },
+    authorName: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: theme.colors.textSecondary,
+      flex: 1,
+      minWidth: 0,
     },
     title: {
       fontSize: 18,

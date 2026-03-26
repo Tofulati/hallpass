@@ -29,6 +29,7 @@ export default function ProfileScreen({ route, navigation }: any) {
   const [loading, setLoading] = useState(true);
   const [loadingCourses, setLoadingCourses] = useState(false);
   const [loadingOrgs, setLoadingOrgs] = useState(false);
+  const [followRequestOutgoing, setFollowRequestOutgoing] = useState(false);
 
   useEffect(() => {
     if (userId === currentUser?.uid) {
@@ -42,37 +43,40 @@ export default function ProfileScreen({ route, navigation }: any) {
   const loadProfile = async () => {
     setLoading(true);
     try {
-      const userData = await DatabaseService.getUser(userId);
-      if (!userData) {
+      const other = await DatabaseService.getUser(userId);
+      if (!other) {
         setProfileUser(null);
+        setFollowRequestOutgoing(false);
         setLoading(false);
         return;
       }
 
-      setProfileUser(userData);
-      
-      // Update following status
-      if (currentUser) {
-        setIsFollowing(userData.followers?.includes(currentUser.uid) || false);
-      } else {
-        setIsFollowing(false);
+      setProfileUser(other);
+
+      const isFollower = !!(currentUser && other.followers?.includes(currentUser.uid));
+      setIsFollowing(isFollower);
+
+      let outgoing = false;
+      if (currentUser && other.isPrivate && !isFollower) {
+        outgoing = await DatabaseService.findPendingFollowRequest(currentUser.uid, userId);
       }
+      setFollowRequestOutgoing(outgoing);
 
       // Load university
-      if (userData.university) {
-        const universityId = typeof userData.university === 'string' 
-          ? userData.university 
-          : (userData.university as University).id;
+      if (other.university) {
+        const universityId =
+          typeof other.university === 'string'
+            ? other.university
+            : (other.university as University).id;
         const uni = await DatabaseService.getUniversity(universityId);
         if (uni) {
           setUniversity(uni);
         }
       }
 
-      // Reload courses and organizations based on updated following status
-      const canViewContent = !userData.isPrivate || isFollowing;
-      if (canViewContent && userData) {
-        await Promise.all([loadUserCourses(userData), loadUserOrganizations(userData)]);
+      const canViewContent = !other.isPrivate || isFollower;
+      if (canViewContent) {
+        await Promise.all([loadUserCourses(other), loadUserOrganizations(other)]);
       } else {
         setCourses([]);
         setOrganizations([]);
@@ -133,17 +137,31 @@ export default function ProfileScreen({ route, navigation }: any) {
 
   const handleFollow = async () => {
     if (!currentUser || !profileUser) return;
-    
+
     try {
       if (isFollowing) {
         await DatabaseService.unfollowUser(currentUser.uid, profileUser.id);
+        await DatabaseService.deleteFollowRequestByPair(currentUser.uid, profileUser.id).catch(() => {});
         setIsFollowing(false);
-      } else {
-        await DatabaseService.followUser(currentUser.uid, profileUser.id);
-        setIsFollowing(true);
+        setFollowRequestOutgoing(false);
+        await loadProfile();
+        return;
       }
-      
-      // Reload profile to get updated following status and load courses/orgs if now visible
+
+      if (profileUser.isPrivate) {
+        if (followRequestOutgoing) {
+          await DatabaseService.deleteFollowRequestByPair(currentUser.uid, profileUser.id);
+          setFollowRequestOutgoing(false);
+        } else {
+          await DatabaseService.createOrEnsurePendingFollowRequest(currentUser.uid, profileUser.id);
+          setFollowRequestOutgoing(true);
+        }
+        await loadProfile();
+        return;
+      }
+
+      await DatabaseService.followUser(currentUser.uid, profileUser.id);
+      setIsFollowing(true);
       await loadProfile();
     } catch (error) {
       console.error('Error following/unfollowing:', error);
@@ -152,24 +170,43 @@ export default function ProfileScreen({ route, navigation }: any) {
   };
 
   const handleMessage = async () => {
-    if (!currentUser || !profileUser) return;
+    if (!currentUser || !profileUser || !userData) return;
 
     try {
-      // Check if user is private and not followed
-      if (profileUser.isPrivate && !isFollowing) {
-        Alert.alert('Private Profile', 'You must follow this user first to message them.');
-        return;
+      const eligible = DatabaseService.messagingEligible(userData, profileUser.id, profileUser);
+      if (eligible) {
+        const conversationId = await DatabaseService.getOrCreateConversation(
+          currentUser.uid,
+          profileUser.id
+        );
+        navigation.getParent()?.navigate('Message', {
+          screen: 'Chat',
+          params: {
+            conversationId,
+            title: profileUser.name,
+            otherUserId: profileUser.id,
+            isGroup: false,
+          },
+        });
+      } else {
+        const messageRequestId = await DatabaseService.getOrCreatePendingMessageRequest(
+          currentUser.uid,
+          profileUser.id
+        );
+        navigation.getParent()?.navigate('Message', {
+          screen: 'Chat',
+          params: {
+            messageRequestId,
+            title: profileUser.name,
+            otherUserId: profileUser.id,
+            isMessageRequest: true,
+            incomingRequest: false,
+            isGroup: false,
+          },
+        });
       }
-
-      // Create or get conversation
-      const conversationId = await DatabaseService.getOrCreateConversation(currentUser.uid, profileUser.id);
-      // Navigate to Message tab, then to Chat screen
-      navigation.getParent()?.navigate('Message', {
-        screen: 'Chat',
-        params: { conversationId, otherUserId: profileUser.id },
-      });
     } catch (error) {
-      console.error('Error creating conversation:', error);
+      console.error('Error starting chat:', error);
       Alert.alert('Error', 'Failed to start conversation');
     }
   };
@@ -196,7 +233,7 @@ export default function ProfileScreen({ route, navigation }: any) {
 
   const isOwnProfile = currentUser?.uid === userId;
   const isPrivate = profileUser.isPrivate && !isFollowing && !isOwnProfile;
-  const canMessage = !profileUser.isPrivate || isFollowing || isOwnProfile;
+  const canMessage = !isOwnProfile;
 
   return (
     <View style={styles.container}>
@@ -270,11 +307,28 @@ export default function ProfileScreen({ route, navigation }: any) {
         {!isOwnProfile && (
           <View style={styles.actionButtons}>
             <TouchableOpacity
-              style={[styles.actionButton, styles.followButton, isFollowing && styles.followingButton]}
+              style={[
+                styles.actionButton,
+                styles.followButton,
+                isFollowing && styles.followingButton,
+                followRequestOutgoing && !isFollowing && styles.requestedFollowButton,
+              ]}
               onPress={handleFollow}
             >
-              <Text style={[styles.actionButtonText, isFollowing && styles.followingButtonText]}>
-                {isFollowing ? 'Following' : 'Follow'}
+              <Text
+                style={[
+                  styles.actionButtonText,
+                  isFollowing && styles.followingButtonText,
+                  followRequestOutgoing && !isFollowing && styles.requestedFollowButtonText,
+                ]}
+              >
+                {isFollowing
+                  ? 'Following'
+                  : profileUser.isPrivate
+                    ? followRequestOutgoing
+                      ? 'Requested — tap to cancel'
+                      : 'Request to follow'
+                    : 'Follow'}
               </Text>
             </TouchableOpacity>
             {canMessage && (
@@ -393,7 +447,11 @@ export default function ProfileScreen({ route, navigation }: any) {
           <View style={styles.privateContainer}>
             <Ionicons name="lock-closed" size={64} color={theme.colors.textSecondary} />
             <Text style={styles.privateText}>This profile is private</Text>
-            <Text style={styles.privateSubtext}>Follow to see more</Text>
+            <Text style={styles.privateSubtext}>
+              {followRequestOutgoing
+                ? 'You’ll see their courses and organizations if they accept your request.'
+                : 'Send a follow request to see their courses and organizations.'}
+            </Text>
           </View>
         )}
       </ScrollView>
@@ -554,6 +612,15 @@ const createStyles = (theme: any, university?: University | null) =>
     },
     followingButtonText: {
       color: theme.colors.text,
+    },
+    requestedFollowButton: {
+      backgroundColor: theme.colors.surface,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    requestedFollowButtonText: {
+      color: theme.colors.textSecondary,
+      fontSize: 14,
     },
     messageButtonText: {
       color: theme.colors.primary,

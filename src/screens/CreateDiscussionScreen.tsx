@@ -141,6 +141,18 @@ export default function CreateDiscussionScreen({ route, navigation }: any) {
       return;
     }
 
+    const universityId =
+      userData?.university == null
+        ? undefined
+        : typeof userData.university === 'string'
+          ? userData.university
+          : userData.university.id;
+    if (!universityId?.trim()) {
+      Alert.alert('Error', 'Your account needs a university before you can post.');
+      return;
+    }
+    const uni = universityId.trim();
+
     setLoading(true);
     try {
       // Use the association type to set courseId or organizationId
@@ -186,6 +198,7 @@ export default function CreateDiscussionScreen({ route, navigation }: any) {
         content: content.trim(),
         tags: selectedTags,
         images: images.length > 0 ? images : undefined,
+        universityId: uni,
         courseId: normalizedCourseId,
         organizationId: normalizedOrganizationId,
         isPrivate: finalIsPrivate || false,

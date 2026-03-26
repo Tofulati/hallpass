@@ -87,15 +87,16 @@ export default function ClubDetailScreen({ route, navigation }: any) {
   };
 
   const loadDiscussions = async () => {
-    if (!orgId) return;
+    if (!orgId || !organization?.universityId?.trim()) return;
     
     try {
       // Normalize orgId before querying (trim to ensure consistency)
       const normalizedOrgId = orgId.trim();
+      const universityId = organization.universityId.trim();
       
       // Load organization-specific discussions using normalized orgId from route params
       const orgDiscussions = await DatabaseService.getDiscussions(
-        { organizationId: normalizedOrgId },
+        { organizationId: normalizedOrgId, universityId },
         'popularity',
         100
       );
@@ -119,9 +120,8 @@ export default function ClubDetailScreen({ route, navigation }: any) {
         return dOrgId === normalizedOrgId;
       });
       
-      // Load all discussions and filter for general ones (no courseId and no organizationId)
       const allDiscussionsRaw = await DatabaseService.getDiscussions(
-        {},
+        { universityId },
         'popularity',
         200
       );

@@ -153,16 +153,17 @@ export default function CourseDetailScreen({ route, navigation }: any) {
   };
 
   const loadDiscussions = async () => {
-    if (!courseId) return;
+    if (!courseId || !course?.universityId?.trim()) return;
     
     setLoadingDiscussions(true);
     try {
       // Normalize courseId before querying (trim to ensure consistency)
       const normalizedCourseId = courseId.trim();
+      const universityId = course.universityId.trim();
       
       // Load course-specific discussions (both public and private if enrolled)
       const courseDiscussions = await DatabaseService.getDiscussions(
-        { courseId: normalizedCourseId },
+        { courseId: normalizedCourseId, universityId },
         'popularity',
         100
       );
@@ -195,9 +196,9 @@ export default function CourseDetailScreen({ route, navigation }: any) {
         return matches;
       });
       
-      // Load all discussions and filter for general ones (no courseId and no organizationId)
+      // Campus-wide general threads (no course / org attachment)
       const allDiscussionsRaw = await DatabaseService.getDiscussions(
-        {},
+        { universityId },
         'popularity',
         200
       );
@@ -244,15 +245,16 @@ export default function CourseDetailScreen({ route, navigation }: any) {
   };
 
   const loadPrivateDiscussions = async () => {
-    if (!courseId || !isEnrolled) return;
+    if (!courseId || !isEnrolled || !course?.universityId?.trim()) return;
     
     try {
       // Normalize courseId before querying (trim to ensure consistency)
       const normalizedCourseId = courseId.trim();
+      const universityId = course.universityId.trim();
       
       // Load private course discussions
       const privateCourseDiscussions = await DatabaseService.getDiscussions(
-        { courseId: normalizedCourseId, isPrivate: true },
+        { courseId: normalizedCourseId, isPrivate: true, universityId },
         'popularity',
         100
       );

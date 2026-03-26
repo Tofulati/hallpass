@@ -1,0 +1,24 @@
+{
+  "outputPath": "scripts/onboarding-catalog.json",
+  "mergeExisting": false,
+  "delayMs": 900,
+  "sections": {
+    "universities": true,
+    "courses": false,
+    "organizations": false,
+    "professors": false
+  },
+  "universities": [
+    {
+      "id": "your-school-slug",
+      "name": "Your University Name",
+      "wikipediaTitle": "Your University Article Title on Wikipedia",
+      "logo": "",
+      "image": "",
+      "colors": {
+        "primary": "#6366f1",
+        "secondary": "#8b92a7"
+      }
+    }
+  ]
+}
