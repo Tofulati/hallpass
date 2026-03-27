@@ -15,6 +15,7 @@ import { useTheme } from '../context/ThemeContext';
 import { DatabaseService } from '../services/databaseService';
 import { User, Course, Organization, Professor } from '../types';
 import { Ionicons } from '@expo/vector-icons';
+import { RateMyProfessorService, type RateMyProfessorRating } from '../services/rateMyProfessorService';
 
 type SearchResult = {
   type: 'user' | 'course' | 'organization' | 'professor';
@@ -28,6 +29,8 @@ type SearchResultsByCategory = {
   professors: Professor[];
 };
 
+type RecommendationSets = SearchResultsByCategory;
+
 export default function SearchScreen({ navigation }: any) {
   const { userData } = useAuth();
   const { theme } = useTheme();
@@ -38,19 +41,17 @@ export default function SearchScreen({ navigation }: any) {
     organizations: [],
     professors: [],
   });
-  const [searching, setSearching] = useState(false);
-  const debouncedQuery = useDebouncedValue(searchQuery, 350);
-  const [collapsedSections, setCollapsedSections] = useState<{
-    users: boolean;
-    courses: boolean;
-    organizations: boolean;
-    professors: boolean;
-  }>({
-    users: true,
-    courses: true,
-    organizations: true,
-    professors: true,
+  const [recommendations, setRecommendations] = useState<RecommendationSets>({
+    users: [],
+    courses: [],
+    organizations: [],
+    professors: [],
   });
+  const [searching, setSearching] = useState(false);
+  const [loadingRecommendations, setLoadingRecommendations] = useState(false);
+  const debouncedQuery = useDebouncedValue(searchQuery, 350);
+  const [universityName, setUniversityName] = useState<string>('');
+  const [rmpByProfessorId, setRmpByProfessorId] = useState<Record<string, RateMyProfessorRating | null>>({});
 
   useEffect(() => {
     const q = debouncedQuery.trim();
@@ -111,6 +112,189 @@ export default function SearchScreen({ navigation }: any) {
     };
   }, [debouncedQuery, userData]);
 
+  useEffect(() => {
+    if (!userData?.university || !userData?.id) {
+      setRecommendations({ users: [], courses: [], organizations: [], professors: [] });
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      setLoadingRecommendations(true);
+      try {
+        const universityId =
+          typeof userData.university === 'string'
+            ? userData.university
+            : userData.university.id;
+
+        const [discussions, courses, organizations, professors, allUniversityUsers] = await Promise.all([
+          DatabaseService.getDiscussions({ universityId }, 'recent', 500),
+          DatabaseService.getCourses(universityId),
+          DatabaseService.getOrganizations(universityId),
+          DatabaseService.getProfessors(universityId),
+          DatabaseService.searchUsers('', universityId),
+        ]);
+
+        const courseDiscussionCounts = new Map<string, number>();
+        const organizationDiscussionCounts = new Map<string, number>();
+        for (const discussion of discussions) {
+          if (discussion.courseId) {
+            courseDiscussionCounts.set(
+              discussion.courseId,
+              (courseDiscussionCounts.get(discussion.courseId) ?? 0) + 1
+            );
+          }
+          if (discussion.organizationId) {
+            organizationDiscussionCounts.set(
+              discussion.organizationId,
+              (organizationDiscussionCounts.get(discussion.organizationId) ?? 0) + 1
+            );
+          }
+        }
+
+        const trendingCourses = [...courses]
+          .sort((a, b) => {
+            const aCount = courseDiscussionCounts.get(a.id) ?? 0;
+            const bCount = courseDiscussionCounts.get(b.id) ?? 0;
+            if (bCount !== aCount) return bCount - aCount;
+            return (b.members?.length ?? 0) - (a.members?.length ?? 0);
+          })
+          .slice(0, 8);
+
+        const trendingOrganizations = [...organizations]
+          .sort((a, b) => {
+            const aCount = organizationDiscussionCounts.get(a.id) ?? 0;
+            const bCount = organizationDiscussionCounts.get(b.id) ?? 0;
+            if (bCount !== aCount) return bCount - aCount;
+            return (b.members?.length ?? 0) - (a.members?.length ?? 0);
+          })
+          .slice(0, 8);
+
+        const viewerNetwork = new Set<string>([
+          ...(userData.following || []),
+          ...(userData.followers || []),
+        ]);
+
+        const recommendedUsers = allUniversityUsers
+          .filter((candidate) => candidate.id !== userData.id)
+          .filter((candidate) => !(userData.following || []).includes(candidate.id))
+          .map((candidate) => {
+            const mutuals = new Set<string>();
+            for (const id of candidate.followers || []) {
+              if (viewerNetwork.has(id)) mutuals.add(id);
+            }
+            for (const id of candidate.following || []) {
+              if (viewerNetwork.has(id)) mutuals.add(id);
+            }
+            return {
+              candidate,
+              mutualCount: mutuals.size,
+            };
+          })
+          .sort((a, b) => {
+            if (b.mutualCount !== a.mutualCount) return b.mutualCount - a.mutualCount;
+            return (b.candidate.discussionRanking || 0) - (a.candidate.discussionRanking || 0);
+          })
+          .map((x) => x.candidate)
+          .slice(0, 8);
+
+        const userCourseIds = (userData.courses || [])
+          .map((course: any) => {
+            if (typeof course === 'string') return course;
+            if (course?.id && typeof course.id === 'string') return course.id;
+            return null;
+          })
+          .filter((id: string | null): id is string => !!id);
+        const courseIdSet = new Set<string>(userCourseIds);
+
+        const recommendedProfessors = professors
+          .filter((prof) => {
+            const byCourseArray = (prof.courses || []).some((courseId) => courseIdSet.has(courseId));
+            const byTaughtCourses = (prof.taughtCourses || []).some((entry) =>
+              courseIdSet.has(entry.courseId)
+            );
+            return byCourseArray || byTaughtCourses;
+          })
+          .sort((a, b) => (b.averageRating?.totalRating || 0) - (a.averageRating?.totalRating || 0))
+          .slice(0, 8);
+
+        if (!cancelled) {
+          setRecommendations({
+            users: recommendedUsers,
+            courses: trendingCourses,
+            organizations: trendingOrganizations,
+            professors: recommendedProfessors,
+          });
+        }
+      } catch (error) {
+        console.error('Error loading search recommendations:', error);
+        if (!cancelled) {
+          setRecommendations({ users: [], courses: [], organizations: [], professors: [] });
+        }
+      } finally {
+        if (!cancelled) setLoadingRecommendations(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userData]);
+
+  useEffect(() => {
+    // Fetch university name once (needed for RMP lookup).
+    if (!userData?.university) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const universityId =
+          typeof userData.university === 'string' ? userData.university : userData.university.id;
+        const uni = await DatabaseService.getUniversity(universityId);
+        const name = uni?.name || '';
+        if (!cancelled) setUniversityName(name);
+      } catch {
+        if (!cancelled) setUniversityName('');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userData?.university]);
+
+  useEffect(() => {
+    // Best-effort: enrich professor search results with RMP ratings so the list rating matches the profile.
+    if (!universityName.trim()) return;
+    const professorsToEnrich = [...results.professors, ...recommendations.professors];
+    if (!professorsToEnrich.length) return;
+
+    let cancelled = false;
+    (async () => {
+      for (const prof of professorsToEnrich) {
+        if (cancelled) return;
+        if (!prof?.id || !prof?.name) continue;
+        if (Object.prototype.hasOwnProperty.call(rmpByProfessorId, prof.id)) continue;
+
+        try {
+          const rating = await RateMyProfessorService.lookupProfessorRating({
+            universityName,
+            professorName: prof.name,
+          });
+          if (!cancelled) {
+            setRmpByProfessorId((prev) => ({ ...prev, [prof.id]: rating }));
+          }
+        } catch {
+          if (!cancelled) {
+            setRmpByProfessorId((prev) => ({ ...prev, [prof.id]: null }));
+          }
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [results.professors, recommendations.professors, universityName, Object.keys(rmpByProfessorId).length]);
+
   const renderUser = (user: User) => (
     <TouchableOpacity
       key={user.id}
@@ -159,7 +343,20 @@ export default function SearchScreen({ navigation }: any) {
     </TouchableOpacity>
   );
 
-  const renderProfessor = (professor: Professor) => (
+  const renderProfessor = (professor: Professor) => {
+    const appOverall = professor.averageRating?.totalRating ?? 0;
+    const internalCount = professor.ratings?.length ?? 0;
+    const rmpRating = professor.id ? rmpByProfessorId[professor.id] : undefined;
+    const rmpOverall = rmpRating?.totalRating ?? null;
+
+    const combinedOverall =
+      rmpOverall && rmpOverall > 0
+        ? internalCount > 0
+          ? (appOverall + rmpOverall) / 2
+          : rmpOverall
+        : appOverall;
+
+    return (
     <TouchableOpacity
       key={professor.id}
       style={styles.resultCard}
@@ -173,23 +370,23 @@ export default function SearchScreen({ navigation }: any) {
             {professor.email}
           </Text>
         )}
-        {professor.averageRating.totalRating > 0 && (
+        {combinedOverall > 0 && (
           <Text style={styles.resultSubtitle} numberOfLines={1}>
-            Rating: {professor.averageRating.totalRating.toFixed(1)}/5
+            Rating: {combinedOverall.toFixed(1)}/5
           </Text>
         )}
       </View>
     </TouchableOpacity>
-  );
-
-  const toggleSection = (section: 'users' | 'courses' | 'organizations' | 'professors') => {
-    setCollapsedSections(prev => ({
-      ...prev,
-      [section]: !prev[section],
-    }));
+    );
   };
 
-  const hasResults = results.users.length > 0 || results.courses.length > 0 || results.organizations.length > 0 || results.professors.length > 0;
+  const showingSearchResults = debouncedQuery.trim().length > 0;
+  const shownData = showingSearchResults ? results : recommendations;
+  const hasResults =
+    shownData.users.length > 0 ||
+    shownData.courses.length > 0 ||
+    shownData.organizations.length > 0 ||
+    shownData.professors.length > 0;
 
   const queryTrim = searchQuery.trim();
   const debTrim = debouncedQuery.trim();
@@ -223,97 +420,66 @@ export default function SearchScreen({ navigation }: any) {
           showsVerticalScrollIndicator={false}
         >
           {/* Users Section */}
-          {results.users.length > 0 && (
+          {shownData.users.length > 0 && (
             <View style={styles.section}>
-              <TouchableOpacity 
-                style={styles.sectionHeader}
-                onPress={() => toggleSection('users')}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.sectionTitle}>Users ({results.users.length})</Text>
-                <Ionicons 
-                  name={collapsedSections.users ? 'chevron-down' : 'chevron-up'} 
-                  size={20} 
-                  color={theme.colors.textSecondary} 
-                />
-              </TouchableOpacity>
-              {!collapsedSections.users && (
-                <View style={styles.sectionContent}>
-                  {results.users.map(renderUser)}
-                </View>
-              )}
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>
+                  {showingSearchResults ? 'Users' : 'Recommended Users'} ({shownData.users.length})
+                </Text>
+              </View>
+              <View style={styles.sectionContent}>
+                {shownData.users.map(renderUser)}
+              </View>
             </View>
           )}
 
           {/* Professors Section */}
-          {results.professors.length > 0 && (
+          {shownData.professors.length > 0 && (
             <View style={styles.section}>
-              <TouchableOpacity 
-                style={styles.sectionHeader}
-                onPress={() => toggleSection('professors')}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.sectionTitle}>Professors ({results.professors.length})</Text>
-                <Ionicons 
-                  name={collapsedSections.professors ? 'chevron-down' : 'chevron-up'} 
-                  size={20} 
-                  color={theme.colors.textSecondary} 
-                />
-              </TouchableOpacity>
-              {!collapsedSections.professors && (
-                <View style={styles.sectionContent}>
-                  {results.professors.map(renderProfessor)}
-                </View>
-              )}
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>
+                  {showingSearchResults ? 'Professors' : 'Recommended Professors'} ({shownData.professors.length})
+                </Text>
+              </View>
+              <View style={styles.sectionContent}>
+                {shownData.professors.map(renderProfessor)}
+              </View>
             </View>
           )}
 
           {/* Courses Section */}
-          {results.courses.length > 0 && (
+          {shownData.courses.length > 0 && (
             <View style={styles.section}>
-              <TouchableOpacity 
-                style={styles.sectionHeader}
-                onPress={() => toggleSection('courses')}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.sectionTitle}>Courses ({results.courses.length})</Text>
-                <Ionicons 
-                  name={collapsedSections.courses ? 'chevron-down' : 'chevron-up'} 
-                  size={20} 
-                  color={theme.colors.textSecondary} 
-                />
-              </TouchableOpacity>
-              {!collapsedSections.courses && (
-                <View style={styles.sectionContent}>
-                  {results.courses.map(renderCourse)}
-                </View>
-              )}
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>
+                  {showingSearchResults ? 'Courses' : 'Trending Courses'} ({shownData.courses.length})
+                </Text>
+              </View>
+              <View style={styles.sectionContent}>
+                {shownData.courses.map(renderCourse)}
+              </View>
             </View>
           )}
 
           {/* Organizations Section */}
-          {results.organizations.length > 0 && (
+          {shownData.organizations.length > 0 && (
             <View style={styles.section}>
-              <TouchableOpacity 
-                style={styles.sectionHeader}
-                onPress={() => toggleSection('organizations')}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.sectionTitle}>Organizations ({results.organizations.length})</Text>
-                <Ionicons 
-                  name={collapsedSections.organizations ? 'chevron-down' : 'chevron-up'} 
-                  size={20} 
-                  color={theme.colors.textSecondary} 
-                />
-              </TouchableOpacity>
-              {!collapsedSections.organizations && (
-                <View style={styles.sectionContent}>
-                  {results.organizations.map(renderOrganization)}
-                </View>
-              )}
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>
+                  {showingSearchResults ? 'Organizations' : 'Trending Organizations'} ({shownData.organizations.length})
+                </Text>
+              </View>
+              <View style={styles.sectionContent}>
+                {shownData.organizations.map(renderOrganization)}
+              </View>
             </View>
           )}
         </ScrollView>
+      ) : searching || loadingRecommendations ? (
+        <View style={styles.emptyContainer}>
+          <ActivityIndicator size="large" color={theme.colors.primary} />
+          <Text style={styles.emptySubtext}>Loading recommendations...</Text>
+        </View>
       ) : searchQuery.trim() ? (
         <View style={styles.emptyContainer}>
           <Ionicons name="search-outline" size={64} color={theme.colors.textSecondary} />
@@ -323,7 +489,8 @@ export default function SearchScreen({ navigation }: any) {
       ) : (
         <View style={styles.emptyContainer}>
           <Ionicons name="search-outline" size={64} color={theme.colors.textSecondary} />
-          <Text style={styles.emptyText}>Search for users, courses, organizations, or professors</Text>
+          <Text style={styles.emptyText}>No recommendations yet</Text>
+          <Text style={styles.emptySubtext}>Try searching users, courses, organizations, or professors</Text>
         </View>
       )}
     </SafeAreaView>

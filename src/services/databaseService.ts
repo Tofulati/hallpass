@@ -837,6 +837,7 @@ export class DatabaseService {
         email: data.email,
         image: data.image,
         courses: data.courses || [],
+        taughtCourses: Array.isArray(data.taughtCourses) ? data.taughtCourses : [],
         universityId: data.universityId,
         ratings,
         averageRating: averages,
@@ -997,30 +998,40 @@ export class DatabaseService {
       // Update the course to include this professor name if not already there
       // Note: Courses store professors as strings (names) for simplicity and backward compatibility
       // This is done before creating the rating to ensure the course knows about the professor
+      // NOTE: Your Firestore rules may not allow updating `courses` from the client.
+      // A rating submission should still succeed even if this association update is blocked,
+      // so we treat this write as "best effort".
       if (rating.courseId) {
-        const courseDoc = await getDoc(doc(db, 'courses', rating.courseId));
-        if (courseDoc.exists()) {
-          const courseData = courseDoc.data();
-          const professorsData = courseData.professors || [];
-          const professorNameLower = professorName.toLowerCase();
-          
-          // Check if professor name is already in the course (as string)
-          const hasProfessor = professorsData.some((prof: any) => {
-            if (typeof prof === 'string') {
-              return prof.toLowerCase().trim() === professorNameLower;
-            }
-            if (prof && typeof prof === 'object' && prof.name) {
-              return prof.name.toLowerCase().trim() === professorNameLower;
-            }
-            return false;
-          });
-          
-          if (!hasProfessor) {
-            // Add professor name to course's professors array (as string for consistency)
-            await updateDoc(courseDoc.ref, {
-              professors: arrayUnion(professorName),
+        try {
+          const courseDoc = await getDoc(doc(db, 'courses', rating.courseId));
+          if (courseDoc.exists()) {
+            const courseData = courseDoc.data();
+            const professorsData = courseData.professors || [];
+            const professorNameLower = professorName.toLowerCase();
+            
+            // Check if professor name is already in the course (as string)
+            const hasProfessor = professorsData.some((prof: any) => {
+              if (typeof prof === 'string') {
+                return prof.toLowerCase().trim() === professorNameLower;
+              }
+              if (prof && typeof prof === 'object' && prof.name) {
+                return prof.name.toLowerCase().trim() === professorNameLower;
+              }
+              return false;
             });
+            
+            if (!hasProfessor) {
+              // Add professor name to course's professors array (as string for consistency)
+              await updateDoc(courseDoc.ref, {
+                professors: arrayUnion(professorName),
+              });
+            }
           }
+        } catch (error) {
+          console.warn(
+            'Non-fatal: could not update course.professors during rating submission:',
+            error
+          );
         }
       }
 
@@ -1056,40 +1067,59 @@ export class DatabaseService {
 
       // After rating is successfully created, update professor's courses array if courseId is provided
       // This ensures we only add the course if the rating was successfully created
+      // Best effort: if rules disallow updating `professors/{professorId}`, don't block the rating write.
       if (rating.courseId && rating.courseId.trim()) {
-        // Re-fetch professor data to get latest courses array
-        const updatedProfDoc = await getDoc(doc(db, 'professors', professorId));
-        if (updatedProfDoc.exists()) {
-          const updatedProfData = updatedProfDoc.data();
-          const courses = updatedProfData.courses || [];
-          const normalizedCourseId = rating.courseId.trim();
-          
-          // Normalize existing courses for comparison
-          const normalizedCourses = (courses as any[]).map((c: any) => {
-            if (typeof c === 'string') return c.trim();
-            if (c && typeof c === 'object' && c.id) return c.id.trim();
-            return String(c).trim();
-          });
-          
-          // Check if course is already in the professor's courses array
-          const courseExists = normalizedCourses.some((c: string) => c === normalizedCourseId);
-          
-          if (!courseExists) {
-            // Add course to professor's courses array
-            await updateDoc(doc(db, 'professors', professorId), {
-              courses: arrayUnion(normalizedCourseId),
+        try {
+          // Re-fetch professor data to get latest courses array
+          const updatedProfDoc = await getDoc(doc(db, 'professors', professorId));
+          if (updatedProfDoc.exists()) {
+            const updatedProfData = updatedProfDoc.data();
+            const courses = updatedProfData.courses || [];
+            const normalizedCourseId = rating.courseId.trim();
+            
+            // Normalize existing courses for comparison
+            const normalizedCourses = (courses as any[]).map((c: any) => {
+              if (typeof c === 'string') return c.trim();
+              if (c && typeof c === 'object' && c.id) return c.id.trim();
+              return String(c).trim();
             });
-            console.log(`Added course ${normalizedCourseId} to professor ${professorId}'s courses array after rating submission`);
+            
+            // Check if course is already in the professor's courses array
+            const courseExists = normalizedCourses.some((c: string) => c === normalizedCourseId);
+            
+            if (!courseExists) {
+              // Add course to professor's courses array
+              await updateDoc(doc(db, 'professors', professorId), {
+                courses: arrayUnion(normalizedCourseId),
+              });
+              console.log(
+                `Added course ${normalizedCourseId} to professor ${professorId}'s courses array after rating submission`
+              );
+            }
           }
+        } catch (error) {
+          console.warn(
+            'Non-fatal: could not update professor.courses during rating submission:',
+            error
+          );
         }
       }
 
       // Update professor average rating
-      const professor = await this.getProfessor(professorId);
-      if (professor) {
-        await updateDoc(doc(db, 'professors', professorId), {
-          averageRating: professor.averageRating,
-        });
+      // Best effort: getProfessor() already recomputes averageRating from ratings,
+      // but this stored-field update may be blocked by security rules.
+      try {
+        const professor = await this.getProfessor(professorId);
+        if (professor) {
+          await updateDoc(doc(db, 'professors', professorId), {
+            averageRating: professor.averageRating,
+          });
+        }
+      } catch (error) {
+        console.warn(
+          'Non-fatal: could not update professor.averageRating during rating submission:',
+          error
+        );
       }
 
       return docRef.id;

@@ -5,7 +5,6 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Image,
   RefreshControl,
   FlatList,
 } from 'react-native';
@@ -15,6 +14,7 @@ import { useTheme } from '../context/ThemeContext';
 import { DatabaseService } from '../services/databaseService';
 import { Professor, ProfessorRating } from '../types';
 import { Image as ExpoImage } from 'expo-image';
+import { RateMyProfessorService, type RateMyProfessorRating } from '../services/rateMyProfessorService';
 
 export default function ProfessorDetailScreen({ route, navigation }: any) {
   const { professorId } = route.params;
@@ -22,8 +22,11 @@ export default function ProfessorDetailScreen({ route, navigation }: any) {
   const { theme } = useTheme();
   const [professor, setProfessor] = useState<Professor | null>(null);
   const [ratings, setRatings] = useState<ProfessorRating[]>([]);
+  const [coursesExpanded, setCoursesExpanded] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [rmpRating, setRmpRating] = useState<RateMyProfessorRating | null>(null);
+  const [rmpLoading, setRmpLoading] = useState(false);
 
   const loadProfessor = useCallback(async () => {
     try {
@@ -49,6 +52,44 @@ export default function ProfessorDetailScreen({ route, navigation }: any) {
   useEffect(() => {
     loadProfessor();
   }, [loadProfessor]);
+
+  useEffect(() => {
+    // Enrich professor overall rating with RateMyProfessor (best effort).
+    // We do this client-side at render time so we don't need extra Firestore writes.
+    if (!professor?.id || !professor?.name) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        setRmpLoading(true);
+
+        const universityId =
+          professor.universityId ||
+          (typeof userData?.university === 'string' ? userData?.university : userData?.university?.id);
+
+        if (!universityId) return;
+
+        const uni = await DatabaseService.getUniversity(universityId);
+        const universityName = uni?.name || '';
+        if (!universityName) return;
+
+        const rating = await RateMyProfessorService.lookupProfessorRating({
+          universityName,
+          professorName: professor.name,
+        });
+
+        if (!cancelled) setRmpRating(rating);
+      } catch (e) {
+        console.warn('RateMyProfessor enrichment failed:', e);
+      } finally {
+        if (!cancelled) setRmpLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [professor?.id, professor?.name, professor?.universityId, userData?.university]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -199,6 +240,26 @@ export default function ProfessorDetailScreen({ route, navigation }: any) {
   }
 
   const avgRating = professor.averageRating;
+  const internalCount = ratings.length;
+  const rmCount = rmpRating?.ratingCount ?? 0;
+  const appOverall = avgRating.totalRating ?? 0;
+  const rmpOverall = rmpRating?.totalRating ?? null;
+  const combinedOverall =
+    rmpOverall && rmpOverall > 0
+      ? internalCount > 0
+        ? (appOverall + rmpOverall) / 2
+        : rmpOverall
+      : appOverall;
+
+  const taughtCourses = Array.isArray(professor.taughtCourses) ? professor.taughtCourses : [];
+  const taughtByCourse = taughtCourses.reduce((acc: Record<string, { code: string; name?: string; quarters: Set<string> }>, r) => {
+    if (!r || !r.courseId || !r.courseCode || !r.quarter) return acc;
+    const key = r.courseId;
+    if (!acc[key]) acc[key] = { code: r.courseCode, name: r.courseName, quarters: new Set() };
+    acc[key].quarters.add(r.quarter);
+    return acc;
+  }, {});
+  const taughtGroups = Object.values(taughtByCourse).sort((a, b) => a.code.localeCompare(b.code));
 
   return (
     <View style={styles.container}>
@@ -237,15 +298,40 @@ export default function ProfessorDetailScreen({ route, navigation }: any) {
         <View style={[styles.ratingsOverview, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
           <View style={styles.overallRatingHeader}>
             <Text style={[styles.sectionTitle, styles.sectionTitleInline, { color: theme.colors.text }]}>Overall Ratings</Text>
-            <View style={[
-              styles.overallRatingBox,
-              { backgroundColor: getRatingColor(avgRating.totalRating) }
-            ]}>
-              <Text style={styles.overallRatingText}>
-                {avgRating.totalRating.toFixed(1)}/5
-              </Text>
+            <View
+              style={[
+                styles.overallRatingBox,
+                { backgroundColor: getRatingColor(combinedOverall) },
+              ]}
+            >
+              <Text style={styles.overallRatingText}>{combinedOverall.toFixed(1)}/5</Text>
             </View>
           </View>
+
+          {/* RateMyProfessor: styled like other overview rows */}
+          {rmpLoading ? (
+            <View style={styles.ratingRow}>
+              <Text style={[styles.ratingLabel, { color: theme.colors.textSecondary }]}>RateMyProfessor</Text>
+              <Text style={[styles.rmpLoadingText, { color: theme.colors.textSecondary }]}>
+                Loading...
+              </Text>
+            </View>
+          ) : rmpRating && rmpRating.totalRating > 0 ? (
+            <View style={styles.ratingRow}>
+              <Text style={[styles.ratingLabel, { color: theme.colors.textSecondary }]}>RateMyProfessor</Text>
+              <View style={styles.rmpInlineValue}>
+                {rmCount > 0 ? <Text style={styles.rmpCountText}>{rmCount}</Text> : null}
+                <Text style={[styles.ratingValue, { color: getRatingColor(rmpRating.totalRating) }]}>
+                  {rmpRating.totalRating.toFixed(1)}/5
+                </Text>
+              </View>
+            </View>
+          ) : (
+            <View style={styles.ratingRow}>
+              <Text style={[styles.ratingLabel, { color: theme.colors.textSecondary }]}>RateMyProfessor</Text>
+              <Text style={[styles.ratingValue, { color: theme.colors.textSecondary }]}>Not available</Text>
+            </View>
+          )}
           
           <View style={styles.ratingRow}>
             <Text style={[styles.ratingLabel, { color: theme.colors.textSecondary }]}>Difficulty</Text>
@@ -276,8 +362,56 @@ export default function ProfessorDetailScreen({ route, navigation }: any) {
           </View>
           
           <Text style={[styles.totalRatings, { color: theme.colors.textSecondary }]}>
-            Based on {ratings.length} {ratings.length === 1 ? 'rating' : 'ratings'}
+            Based on {internalCount} {internalCount === 1 ? 'rating' : 'ratings'}
           </Text>
+        </View>
+
+        {/* Courses taught (dropdown) */}
+        <View style={[styles.dropdownCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+          <TouchableOpacity
+            style={styles.dropdownHeader}
+            onPress={() => setCoursesExpanded((v) => !v)}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.sectionTitle, styles.sectionTitleInline, { color: theme.colors.text }]}>
+              Courses taught
+            </Text>
+            <View style={styles.dropdownHeaderRight}>
+              <Text style={[styles.dropdownCount, { color: theme.colors.textSecondary }]}>
+                {taughtGroups.length}
+              </Text>
+              <Ionicons
+                name={coursesExpanded ? 'chevron-up' : 'chevron-down'}
+                size={18}
+                color={theme.colors.textSecondary}
+              />
+            </View>
+          </TouchableOpacity>
+
+          {coursesExpanded ? (
+            taughtGroups.length === 0 ? (
+              <Text style={[styles.dropdownEmpty, { color: theme.colors.textSecondary }]}>
+                No course history yet.
+              </Text>
+            ) : (
+              <View style={styles.dropdownBody}>
+                {taughtGroups.map((g) => {
+                  const quarters = [...g.quarters].sort();
+                  return (
+                    <View key={`${g.code}-${quarters.join('|')}`} style={styles.courseRow}>
+                      <Text style={[styles.courseCode, { color: theme.colors.text }]}>{g.code}</Text>
+                      <Text style={[styles.courseName, { color: theme.colors.textSecondary }]}>
+                        {g.name ? g.name : ''}
+                      </Text>
+                      <Text style={[styles.courseQuarters, { color: theme.colors.textSecondary }]}>
+                        {quarters.join(', ')}
+                      </Text>
+                    </View>
+                  );
+                })}
+              </View>
+            )
+          ) : null}
         </View>
 
         {/* Ratings List */}
@@ -372,6 +506,50 @@ const createStyles = (theme: any) =>
       marginBottom: 24,
       borderWidth: 1,
     },
+    dropdownCard: {
+      borderRadius: 16,
+      padding: 20,
+      marginBottom: 24,
+      borderWidth: 1,
+    },
+    dropdownHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+    dropdownHeaderRight: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    dropdownCount: {
+      fontSize: 12,
+      fontWeight: '700',
+      minWidth: 18,
+      textAlign: 'right',
+    },
+    dropdownBody: {
+      marginTop: 14,
+      gap: 12,
+    },
+    dropdownEmpty: {
+      marginTop: 14,
+      fontSize: 14,
+    },
+    courseRow: {
+      gap: 4,
+    },
+    courseCode: {
+      fontSize: 14,
+      fontWeight: '700',
+    },
+    courseName: {
+      fontSize: 13,
+    },
+    courseQuarters: {
+      fontSize: 12,
+      fontWeight: '600',
+    },
     sectionTitle: {
       fontSize: 18,
       fontWeight: '600',
@@ -385,6 +563,29 @@ const createStyles = (theme: any) =>
       justifyContent: 'space-between',
       alignItems: 'center',
       marginBottom: 16,
+    },
+    rmpBoxRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      marginBottom: 10,
+      marginTop: -6,
+    },
+    rmpInlineValue: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    rmpCountText: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: theme.colors.textSecondary,
+      minWidth: 26,
+      textAlign: 'center',
+    },
+    rmpLoadingText: {
+      fontSize: 12,
+      fontWeight: '600',
     },
     overallRatingBox: {
       paddingHorizontal: 12,

@@ -121,9 +121,16 @@ export default function ProfileScreen({ route, navigation }: any) {
       return;
     }
 
+    if (!userData.university) {
+      setOrganizations([]);
+      return;
+    }
+
     setLoadingOrgs(true);
     try {
-      const allOrganizations = await DatabaseService.getOrganizations();
+      const universityId =
+        typeof userData.university === 'string' ? userData.university : userData.university.id;
+      const allOrganizations = await DatabaseService.getOrganizations(universityId);
       const clubIds = userData.clubs.map((c: any) => typeof c === 'string' ? c : c.id);
       const userOrgs = allOrganizations.filter(org => clubIds.includes(org.id));
       setOrganizations(userOrgs);

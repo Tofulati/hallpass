@@ -15,7 +15,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { DatabaseService } from '../services/databaseService';
-import { MLService } from '../services/mlService';
 import { Discussion, FollowRequest, User } from '../types';
 
 export default function NotificationsScreen({ navigation }: any) {
@@ -89,7 +88,12 @@ export default function NotificationsScreen({ navigation }: any) {
         return;
       }
 
-      const all = await DatabaseService.getDiscussions({ universityId: universityId.trim() }, 'popularity', 200);
+      // Fetch a sample then rank client-side by "reaction + comments" engagement.
+      const all = await DatabaseService.getDiscussions(
+        { universityId: universityId.trim() },
+        'recent',
+        250
+      );
       const filtered = all.filter(d => {
         if (d.courseId && courseIds.includes(d.courseId)) return true;
         if (d.organizationId && orgIds.includes(d.organizationId)) return true;
@@ -97,23 +101,32 @@ export default function NotificationsScreen({ navigation }: any) {
         return false;
       });
 
-      const ranked = filtered.map(d => {
-        const rankingInput = {
-          upvotes: d.upvotes.length,
-          downvotes: d.downvotes.length,
-          comments: d.comments.length,
-          timeSinceCreation: Date.now() - d.createdAt.getTime(),
-          userRanking: 0,
-        };
-        const ml = MLService.calculateRanking(rankingInput);
-        return { ...d, score: ml.score };
-      });
-      ranked.sort((a, b) => b.score - a.score);
-      const top = ranked.slice(0, 12);
+      const commentCountFor = (d: Discussion) =>
+        typeof d.commentCount === 'number' ? d.commentCount : d.comments.length;
+
+      const ranked = filtered
+        .map(d => {
+          const reactions = d.upvotes.length + d.downvotes.length; // includes both A and F
+          const comments = commentCountFor(d);
+          // Soft recency factor so very old threads don't dominate purely by counts.
+          const ageMs = Date.now() - d.createdAt.getTime();
+          const recencyFactor = Math.exp(-ageMs / (24 * 60 * 60 * 1000)); // ~24h half-life-ish
+
+          // Prioritize high reactions and/or comments.
+          const score =
+            Math.log(reactions + 1) * 0.8 +
+            Math.log(comments + 1) * 1.1 +
+            recencyFactor * 0.2;
+
+          return { d, score };
+        })
+        .sort((a, b) => b.score - a.score);
+
+      const top = ranked.slice(0, 12).map(x => x.d);
 
       const labels: Record<string, string> = {};
       const courses = await DatabaseService.getCourses(universityId.trim());
-      const orgs = await DatabaseService.getOrganizations();
+      const orgs = await DatabaseService.getOrganizations(universityId.trim());
       for (const d of top) {
         if (d.courseId) {
           const c = courses.find(x => x.id === d.courseId);
@@ -179,25 +192,8 @@ export default function NotificationsScreen({ navigation }: any) {
   };
 
   const openDiscussionContext = (d: Discussion) => {
-    const tabNav = navigation.getParent() || navigation;
-    if (d.courseId) {
-      tabNav.navigate('Course', {
-        screen: 'CourseDetail',
-        params: { courseId: d.courseId },
-      });
-    } else if (d.organizationId) {
-      tabNav.navigate('Clubs', {
-        screen: 'ClubDetail',
-        params: { clubId: d.organizationId, organizationId: d.organizationId },
-      });
-    } else if (d.clubId) {
-      tabNav.navigate('Clubs', {
-        screen: 'ClubDetail',
-        params: { clubId: d.clubId, organizationId: d.clubId },
-      });
-    } else {
-      tabNav.navigate('Bulletin', { screen: 'BulletinMain' });
-    }
+    // Deep-link straight to the post so tapping trending items lands on the discussion.
+    navigation.navigate('DiscussionDetail', { discussionId: d.id });
   };
 
   return (
@@ -297,8 +293,9 @@ export default function NotificationsScreen({ navigation }: any) {
                 {d.title}
               </Text>
               <Text style={styles.activityMeta}>
-                {d.comments.length} {d.comments.length === 1 ? 'comment' : 'comments'} · {d.upvotes.length}{' '}
-                upvotes
+                {typeof d.commentCount === 'number' ? d.commentCount : d.comments.length}{' '}
+                {(typeof d.commentCount === 'number' ? d.commentCount : d.comments.length) === 1 ? 'comment' : 'comments'} ·{' '}
+                {d.upvotes.length + d.downvotes.length} reactions
               </Text>
             </TouchableOpacity>
           ))

@@ -13,7 +13,7 @@ interface DiscussionCardProps {
 }
 
 export default function DiscussionCard({ discussion, navigation }: DiscussionCardProps) {
-  const { user } = useAuth();
+  const { user, userData } = useAuth();
   const { theme } = useTheme();
   const [upvoted, setUpvoted] = useState(false);
   const [downvoted, setDownvoted] = useState(false);
@@ -49,12 +49,22 @@ export default function DiscussionCard({ discussion, navigation }: DiscussionCar
   useEffect(() => {
     // Reset association name when discussion changes
     setAssociationName(null);
+
+    const currentUniversityId =
+      userData?.university == null
+        ? null
+        : typeof userData.university === 'string'
+          ? userData.university
+          : userData.university.id;
     
     const loadAssociationName = async () => {
       if (discussion.courseId && discussion.courseId.trim()) {
         try {
           const course = await DatabaseService.getCourse(discussion.courseId.trim());
-          if (course) {
+          if (
+            course &&
+            (!currentUniversityId || course.universityId?.trim() === currentUniversityId)
+          ) {
             setAssociationName(`${course.code} - ${course.name}`);
           }
         } catch (error) {
@@ -63,7 +73,7 @@ export default function DiscussionCard({ discussion, navigation }: DiscussionCar
       } else if (discussion.organizationId && discussion.organizationId.trim()) {
         try {
           const org = await DatabaseService.getOrganization(discussion.organizationId.trim());
-          if (org) {
+          if (org && (!currentUniversityId || org.universityId?.trim() === currentUniversityId)) {
             setAssociationName(org.name);
           }
         } catch (error) {
@@ -73,7 +83,7 @@ export default function DiscussionCard({ discussion, navigation }: DiscussionCar
     };
 
     loadAssociationName();
-  }, [discussion.courseId, discussion.organizationId]);
+  }, [discussion.courseId, discussion.organizationId, userData?.university]);
 
   useEffect(() => {
     let mounted = true;

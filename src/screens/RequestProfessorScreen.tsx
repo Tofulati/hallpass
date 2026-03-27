@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -16,6 +16,7 @@ import { DatabaseService } from '../services/databaseService';
 import { ImageUploadResult } from '../services/imageService';
 import ImagePickerButton from '../components/ImagePickerButton';
 import { Ionicons } from '@expo/vector-icons';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
 
 export default function RequestProfessorScreen({ route, navigation }: any) {
   const { courseId } = route.params || {};
@@ -29,6 +30,8 @@ export default function RequestProfessorScreen({ route, navigation }: any) {
   const [university, setUniversity] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [loadingCourses, setLoadingCourses] = useState(false);
+  const [courseSearchQuery, setCourseSearchQuery] = useState('');
+  const debouncedCourseSearchQuery = useDebouncedValue(courseSearchQuery, 200).trim().toLowerCase();
 
   useEffect(() => {
     loadUniversity();
@@ -75,6 +78,18 @@ export default function RequestProfessorScreen({ route, navigation }: any) {
       setSelectedCourses([...selectedCourses, courseId]);
     }
   };
+
+  const coursesToRender = useMemo(() => {
+    if (!debouncedCourseSearchQuery) return courses;
+    const filtered = courses.filter(
+      c =>
+        c.code.toLowerCase().includes(debouncedCourseSearchQuery) ||
+        c.name.toLowerCase().includes(debouncedCourseSearchQuery)
+    );
+    // Keep selected items visible even if they don't match the current search query.
+    const selectedMissing = courses.filter(c => selectedCourses.includes(c.id) && !filtered.some(f => f.id === c.id));
+    return [...filtered, ...selectedMissing];
+  }, [courses, debouncedCourseSearchQuery, selectedCourses]);
 
   const handleSubmit = async () => {
     if (!name.trim()) {
@@ -208,8 +223,17 @@ export default function RequestProfessorScreen({ route, navigation }: any) {
               No courses available
             </Text>
           ) : (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.coursesScroll}>
-              {courses.map((course) => (
+            <>
+              <TextInput
+                style={[styles.pickerSearchInput, { backgroundColor: theme.colors.background, borderColor: theme.colors.border, color: theme.colors.text }]}
+                placeholder="Search by code or name..."
+                placeholderTextColor={theme.colors.textSecondary}
+                value={courseSearchQuery}
+                onChangeText={setCourseSearchQuery}
+                autoCorrect={false}
+              />
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.coursesScroll}>
+              {coursesToRender.map((course) => (
                 <TouchableOpacity
                   key={course.id}
                   style={[
@@ -231,7 +255,13 @@ export default function RequestProfessorScreen({ route, navigation }: any) {
                   </Text>
                 </TouchableOpacity>
               ))}
-            </ScrollView>
+              </ScrollView>
+              {coursesToRender.length === 0 && (
+                <Text style={[styles.helperText, { color: theme.colors.textSecondary, marginTop: 8 }]}>
+                  No courses match your search
+                </Text>
+              )}
+            </>
           )}
         </View>
 
@@ -354,6 +384,14 @@ function createStyles(theme: any) {
       borderWidth: 2,
     },
     courseButtonText: {
+      fontSize: 14,
+    },
+    pickerSearchInput: {
+      height: 44,
+      borderWidth: 1,
+      borderRadius: 10,
+      paddingHorizontal: 12,
+      marginBottom: 12,
       fontSize: 14,
     },
   });

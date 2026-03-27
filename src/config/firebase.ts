@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { initializeAuth, getReactNativePersistence } from 'firebase/auth';
+import { initializeAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -19,11 +19,27 @@ const firebaseConfig = {
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
-// Initialize Auth with AsyncStorage persistence
-// This ensures auth state persists between app sessions
-export const auth = initializeAuth(app, {
-  persistence: getReactNativePersistence(AsyncStorage)
-});
+// Initialize Auth
+// NOTE: `firebase@10.x` no longer exports `getReactNativePersistence` from `firebase/auth`.
+// We try to load the React Native persistence helper dynamically, and fall back to
+// default persistence if it's unavailable.
+let authOptions: any = undefined;
+try {
+  // We import the RN build of `@firebase/auth` directly because `firebase/auth`
+  // typings in this project don't expose `getReactNativePersistence`.
+  // Runtime-wise, `@firebase/auth/dist/rn` DOES export it.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const rnAuth = require('@firebase/auth/dist/rn');
+  if (rnAuth && typeof rnAuth.getReactNativePersistence === 'function') {
+    authOptions = { persistence: rnAuth.getReactNativePersistence(AsyncStorage) };
+  } else {
+    authOptions = undefined;
+  }
+} catch {
+  // Ignore if the helper module doesn't exist in this firebase build/version.
+}
+
+export const auth = initializeAuth(app, authOptions);
 
 // Initialize Firestore
 export const db = getFirestore(app);

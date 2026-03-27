@@ -45,6 +45,16 @@ export interface Professor {
   email?: string;
   image?: string;
   courses: string[]; // Course IDs
+  /**
+   * Historical/metadata record of courses this professor taught (best-effort).
+   * Populated by admin scripts (e.g. Google Sheet imports).
+   */
+  taughtCourses?: Array<{
+    courseId: string;
+    courseCode: string;
+    courseName?: string;
+    quarter: string; // e.g. "Fall 2025"
+  }>;
   universityId?: string;
   ratings: ProfessorRating[];
   averageRating: {

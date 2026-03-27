@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -9,11 +9,11 @@ import {
   Switch,
   Alert,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { DatabaseService } from '../services/databaseService';
 import { Professor } from '../types';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
 
 export default function CreateProfessorRatingScreen({ route, navigation }: any) {
   const { professorId } = route.params;
@@ -21,20 +21,39 @@ export default function CreateProfessorRatingScreen({ route, navigation }: any) 
   const { theme } = useTheme();
   
   const [professor, setProfessor] = useState<Professor | null>(null);
-  const [difficulty, setDifficulty] = useState<number | null>(null);
-  const [enjoyment, setEnjoyment] = useState<number | null>(null);
-  const [understandability, setUnderstandability] = useState<number | null>(null);
+  // Default these to `3` so the UI "preselects" a valid rating value
+  // and the submit button isn't blocked by `=== null` even when users don't tap.
+  const [difficulty, setDifficulty] = useState<number>(3);
+  const [enjoyment, setEnjoyment] = useState<number>(3);
+  const [understandability, setUnderstandability] = useState<number>(3);
   const [retake, setRetake] = useState<boolean | null>(null);
   const [text, setText] = useState('');
   const [anonymous, setAnonymous] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [courses, setCourses] = useState<Array<{ id: string; code: string; name: string }>>([]);
   const [selectedCourseId, setSelectedCourseId] = useState<string>('');
+  const [courseSearchQuery, setCourseSearchQuery] = useState('');
+  const debouncedCourseSearchQuery = useDebouncedValue(courseSearchQuery, 200).trim().toLowerCase();
 
   useEffect(() => {
     loadProfessor();
     loadUserCourses();
   }, [professorId]);
+
+  const coursesToRender = useMemo(() => {
+    if (!debouncedCourseSearchQuery) return courses;
+    const filtered = courses.filter(
+      c =>
+        c.code.toLowerCase().includes(debouncedCourseSearchQuery) ||
+        c.name.toLowerCase().includes(debouncedCourseSearchQuery)
+    );
+    // Keep the selected course visible even if it doesn't match search.
+    if (selectedCourseId && !filtered.some(c => c.id === selectedCourseId)) {
+      const selected = courses.find(c => c.id === selectedCourseId);
+      if (selected) return [...filtered, selected];
+    }
+    return filtered;
+  }, [courses, debouncedCourseSearchQuery, selectedCourseId]);
 
   const loadProfessor = async () => {
     try {
@@ -88,17 +107,17 @@ export default function CreateProfessorRatingScreen({ route, navigation }: any) 
     }
 
     // Validate all required fields
-    if (difficulty === null || difficulty < 1 || difficulty > 5) {
+    if (difficulty < 1 || difficulty > 5) {
       Alert.alert('Error', 'Please provide a difficulty rating (1-5)');
       return;
     }
 
-    if (enjoyment === null || enjoyment < 1 || enjoyment > 5) {
+    if (enjoyment < 1 || enjoyment > 5) {
       Alert.alert('Error', 'Please provide an enjoyment rating (1-5)');
       return;
     }
 
-    if (understandability === null || understandability < 1 || understandability > 5) {
+    if (understandability < 1 || understandability > 5) {
       Alert.alert('Error', 'Please provide an understandability rating (1-5)');
       return;
     }
@@ -227,13 +246,29 @@ export default function CreateProfessorRatingScreen({ route, navigation }: any) 
           <Text style={[styles.requiredLabel, { color: theme.colors.textSecondary }]}>
             Required
           </Text>
+          <TextInput
+            style={[
+              styles.pickerSearchInput,
+              {
+                backgroundColor: theme.colors.background,
+                borderColor: theme.colors.border,
+                color: theme.colors.text,
+              },
+            ]}
+            placeholder="Search by code or name..."
+            placeholderTextColor={theme.colors.textSecondary}
+            value={courseSearchQuery}
+            onChangeText={setCourseSearchQuery}
+            autoCorrect={false}
+            editable={courses.length > 0}
+          />
           {courses.length === 0 ? (
             <Text style={[styles.helperText, { color: theme.colors.textSecondary }]}>
               No courses found for this professor. You can still submit a rating.
             </Text>
           ) : (
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              {courses.map((course) => (
+              {coursesToRender.map((course) => (
                 <TouchableOpacity
                   key={course.id}
                   style={[
@@ -257,6 +292,11 @@ export default function CreateProfessorRatingScreen({ route, navigation }: any) 
               ))}
             </ScrollView>
           )}
+          {courses.length > 0 && debouncedCourseSearchQuery && coursesToRender.length === 0 && (
+            <Text style={[styles.helperText, { color: theme.colors.textSecondary, marginTop: 8 }]}>
+              No courses match your search
+            </Text>
+          )}
           {courses.length > 0 && !selectedCourseId && (
             <Text style={[styles.errorText, { color: theme.colors.error }]}>
               Please select a course
@@ -271,9 +311,9 @@ export default function CreateProfessorRatingScreen({ route, navigation }: any) 
             All fields are required
           </Text>
           
-          {renderRatingSelector('Difficulty', difficulty ?? 3, (val) => setDifficulty(val), true)}
-          {renderRatingSelector('Enjoyment', enjoyment ?? 3, (val) => setEnjoyment(val))}
-          {renderRatingSelector('Understandability', understandability ?? 3, (val) => setUnderstandability(val))}
+          {renderRatingSelector('Difficulty', difficulty, (val) => setDifficulty(val), true)}
+          {renderRatingSelector('Enjoyment', enjoyment, (val) => setEnjoyment(val))}
+          {renderRatingSelector('Understandability', understandability, (val) => setUnderstandability(val))}
         </View>
 
         {/* Retake Toggle */}
@@ -363,10 +403,10 @@ export default function CreateProfessorRatingScreen({ route, navigation }: any) 
           style={[
             styles.submitButton,
             { backgroundColor: theme.colors.primary },
-            (submitting || !selectedCourseId || difficulty === null || enjoyment === null || understandability === null || retake === null || !text.trim()) && styles.submitButtonDisabled
+            (submitting || !selectedCourseId || retake === null || !text.trim()) && styles.submitButtonDisabled
           ]}
           onPress={handleSubmit}
-          disabled={submitting || !selectedCourseId || difficulty === null || enjoyment === null || understandability === null || retake === null || !text.trim()}
+          disabled={submitting || !selectedCourseId || retake === null || !text.trim()}
         >
           <Text style={styles.submitButtonText}>
             {submitting ? 'Submitting...' : 'Submit Rating'}
@@ -515,6 +555,14 @@ const createStyles = (theme: any) =>
       fontSize: 14,
       minHeight: 120,
       textAlignVertical: 'top',
+    },
+    pickerSearchInput: {
+      height: 44,
+      borderWidth: 1,
+      borderRadius: 10,
+      paddingHorizontal: 12,
+      marginBottom: 12,
+      fontSize: 14,
     },
     submitButton: {
       borderRadius: 16,

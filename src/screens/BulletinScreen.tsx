@@ -13,7 +13,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { DatabaseService } from '../services/databaseService';
-import { MLService } from '../services/mlService';
 import { Discussion, SortOption, University } from '../types';
 import DiscussionCard from '../components/DiscussionCard';
 import { Ionicons } from '@expo/vector-icons';
@@ -52,7 +51,7 @@ const interpolateColor = (color1: string, color2: string, factor: number): strin
 };
 
 export default function BulletinScreen({ navigation }: any) {
-  const { user, userData } = useAuth();
+  const { userData } = useAuth();
   const { theme } = useTheme();
   const [discussions, setDiscussions] = useState<Discussion[]>([]);
   const [filteredDiscussions, setFilteredDiscussions] = useState<Discussion[]>([]);
@@ -120,8 +119,9 @@ export default function BulletinScreen({ navigation }: any) {
       // General, course, and org threads for this campus only
       const allDiscussions = await DatabaseService.getDiscussions(
         { universityId: uni },
-        sortBy,
-        200
+        // Fetch a recent sample and then apply our custom controversy/popularity filtering client-side.
+        'recent',
+        500
       );
       
       // Filter private discussions - only show if user is enrolled in the course
@@ -136,29 +136,85 @@ export default function BulletinScreen({ navigation }: any) {
         // Show all non-private discussions
         return true;
       });
-      
-      // Apply ML ranking
-      const rankedDiscussions = visibleDiscussions.map(discussion => {
-        const rankingInput = {
-          upvotes: discussion.upvotes.length,
-          downvotes: discussion.downvotes.length,
-          comments: discussion.comments.length,
-          timeSinceCreation: Date.now() - discussion.createdAt.getTime(),
-          userRanking: 0, // TODO: Get from user data
-        };
-        const mlOutput = MLService.calculateRanking(rankingInput);
-        return {
-          ...discussion,
-          score: mlOutput.score,
-          controversy: mlOutput.controversy,
-        };
-      });
 
-      // Sort by ML score if popularity
+      const getCommentCount = (d: Discussion) =>
+        typeof d.commentCount === 'number' ? d.commentCount : d.comments.length;
+
+      const upvoteCount = (d: Discussion) => d.upvotes.length;
+      const downvoteCount = (d: Discussion) => d.downvotes.length;
+
+      let rankedDiscussions = [...visibleDiscussions];
+
+      // Controversy = highly negative (lots of "F" downvotes).
+      // Popularity = the opposite (low "F" downvotes) and prioritize comment count.
+      if (sortBy === 'controversy' || sortBy === 'popularity') {
+        const downvoteCounts = rankedDiscussions
+          .map(d => downvoteCount(d))
+          .sort((a, b) => a - b);
+
+        const p25 = downvoteCounts.length
+          ? downvoteCounts[Math.floor(downvoteCounts.length * 0.25)]
+          : 0;
+        const p75 = downvoteCounts.length
+          ? downvoteCounts[Math.floor(downvoteCounts.length * 0.75)]
+          : 0;
+
+        if (sortBy === 'controversy') {
+          rankedDiscussions = rankedDiscussions.filter(
+            d => downvoteCount(d) >= p75 && downvoteCount(d) >= upvoteCount(d)
+          );
+        } else {
+          rankedDiscussions = rankedDiscussions.filter(
+            d => downvoteCount(d) <= p25 && upvoteCount(d) >= downvoteCount(d)
+          );
+        }
+
+        // If the filter becomes too strict for the current sample, fall back gracefully.
+        if (rankedDiscussions.length < 5) {
+          rankedDiscussions = [...visibleDiscussions];
+        }
+      }
+
       if (sortBy === 'popularity') {
-        rankedDiscussions.sort((a, b) => b.score - a.score);
+        rankedDiscussions.sort((a, b) => {
+          // Primary: more As (upvotes) should appear higher.
+          const aA = upvoteCount(a);
+          const bA = upvoteCount(b);
+          if (bA !== aA) return bA - aA;
+
+          // Secondary: more comments should appear higher.
+          const aComments = getCommentCount(a);
+          const bComments = getCommentCount(b);
+          if (bComments !== aComments) return bComments - aComments;
+
+          // Tertiary: fewer Fs (downvotes) should appear higher, so more Fs naturally sink.
+          const aF = downvoteCount(a);
+          const bF = downvoteCount(b);
+          if (aF !== bF) return aF - bF;
+
+          return b.createdAt.getTime() - a.createdAt.getTime();
+        });
       } else if (sortBy === 'controversy') {
-        rankedDiscussions.sort((a, b) => b.controversy - a.controversy);
+        rankedDiscussions.sort((a, b) => {
+          // Primary: more Fs (downvotes) should appear higher.
+          const aF = downvoteCount(a);
+          const bF = downvoteCount(b);
+          if (bF !== aF) return bF - aF;
+
+          // Secondary: more comments should appear higher.
+          const aComments = getCommentCount(a);
+          const bComments = getCommentCount(b);
+          if (bComments !== aComments) return bComments - aComments;
+
+          // Tertiary: fewer As (upvotes) should appear higher, so more As sink.
+          const aA = upvoteCount(a);
+          const bA = upvoteCount(b);
+          if (aA !== bA) return aA - bA;
+
+          return b.createdAt.getTime() - a.createdAt.getTime();
+        });
+      } else if (sortBy === 'recent') {
+        rankedDiscussions.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
       }
 
       setDiscussions(rankedDiscussions);

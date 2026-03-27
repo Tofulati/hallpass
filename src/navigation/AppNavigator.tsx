@@ -235,6 +235,14 @@ const UserStack = () => (
 export default function AppNavigator() {
   const { theme } = useTheme();
   const messageBadgeCount = useMessageTabBadgeCount();
+  const rootScreenByTab: Record<string, string> = {
+    Bulletin: 'BulletinMain',
+    Course: 'CourseMain',
+    Clubs: 'ClubsMain',
+    Message: 'MessageMain',
+    Search: 'SearchMain',
+    User: 'UserMain',
+  };
 
   return (
     <SafeAreaProvider>
@@ -302,35 +310,71 @@ export default function AppNavigator() {
             },
           })}
         >
-        <Tab.Screen 
-          name="Bulletin" 
+        <Tab.Screen
+          name="Bulletin"
           component={BulletinStack}
           options={{ headerShown: false }}
+          listeners={({ navigation }) => ({
+            tabPress: e => {
+              e.preventDefault();
+              navigation.navigate('Bulletin', { screen: rootScreenByTab.Bulletin });
+            },
+          })}
         />
-        <Tab.Screen 
-          name="Course" 
+        <Tab.Screen
+          name="Course"
           component={CourseStack}
           options={{ headerShown: false }}
+          listeners={({ navigation }) => ({
+            tabPress: e => {
+              e.preventDefault();
+              navigation.navigate('Course', { screen: rootScreenByTab.Course });
+            },
+          })}
         />
-        <Tab.Screen 
-          name="Clubs" 
+        <Tab.Screen
+          name="Clubs"
           component={ClubsStack}
           options={{ headerShown: false }}
+          listeners={({ navigation }) => ({
+            tabPress: e => {
+              e.preventDefault();
+              navigation.navigate('Clubs', { screen: rootScreenByTab.Clubs });
+            },
+          })}
         />
-        <Tab.Screen 
-          name="Message" 
+        <Tab.Screen
+          name="Message"
           component={MessageStack}
           options={{ headerShown: false }}
+          listeners={({ navigation }) => ({
+            tabPress: e => {
+              e.preventDefault();
+              navigation.navigate('Message', { screen: rootScreenByTab.Message });
+            },
+          })}
         />
-        <Tab.Screen 
-          name="Search" 
+        <Tab.Screen
+          name="Search"
           component={SearchStack}
           options={{ headerShown: false }}
+          listeners={({ navigation }) => ({
+            tabPress: e => {
+              e.preventDefault();
+              navigation.navigate('Search', { screen: rootScreenByTab.Search });
+            },
+          })}
         />
-        <Tab.Screen 
-          name="User" 
+        <Tab.Screen
+          name="User"
           component={UserStack}
           options={{ headerShown: false }}
+          listeners={({ navigation }) => ({
+            tabPress: e => {
+              e.preventDefault();
+              navigation.navigate('User', { screen: rootScreenByTab.User });
+            },
+          })}
         />
         </Tab.Navigator>
       </NavigationContainer>

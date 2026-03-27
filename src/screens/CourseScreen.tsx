@@ -79,7 +79,7 @@ export default function CourseScreen({ navigation }: any) {
         <Ionicons name="search" size={20} color={theme.colors.textSecondary} style={styles.searchIcon} />
         <TextInput
           style={styles.searchInput}
-          placeholder="Search courses or professors..."
+          placeholder="Search courses..."
           placeholderTextColor={theme.colors.textSecondary}
           value={searchQuery}
           onChangeText={setSearchQuery}

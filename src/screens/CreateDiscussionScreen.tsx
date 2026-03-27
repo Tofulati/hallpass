@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -13,10 +13,8 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { DatabaseService } from '../services/databaseService';
-import { ImageService, ImageUploadResult } from '../services/imageService';
 import ImagePickerButton from '../components/ImagePickerButton';
-import { Ionicons } from '@expo/vector-icons';
-import { Course, Organization } from '../types';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
 
 // Predefined tags (10 total)
 const PREDEFINED_TAGS = [
@@ -49,9 +47,16 @@ export default function CreateDiscussionScreen({ route, navigation }: any) {
   const [selectedCourseId, setSelectedCourseId] = useState<string>(courseId || '');
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<string>(organizationId || '');
   const [courses, setCourses] = useState<Array<{ id: string; code: string; name: string }>>([]);
-  const [organizations, setOrganizations] = useState<Array<{ id: string; name: string }>>([]);
+  const [organizations, setOrganizations] = useState<Array<{ id: string; name: string; description?: string }>>([]);
   const [loadingCourses, setLoadingCourses] = useState(false);
   const [loadingOrganizations, setLoadingOrganizations] = useState(false);
+
+  const [courseSearchQuery, setCourseSearchQuery] = useState('');
+  const [organizationSearchQuery, setOrganizationSearchQuery] = useState('');
+  const debouncedCourseSearchQuery = useDebouncedValue(courseSearchQuery, 200).trim().toLowerCase();
+  const debouncedOrganizationSearchQuery = useDebouncedValue(organizationSearchQuery, 200)
+    .trim()
+    .toLowerCase();
 
   useEffect(() => {
     if (userData?.university) {
@@ -82,16 +87,52 @@ export default function CreateDiscussionScreen({ route, navigation }: any) {
   };
 
   const loadOrganizations = async () => {
+    if (!userData?.university) return;
     setLoadingOrganizations(true);
     try {
-      const allOrganizations = await DatabaseService.getOrganizations();
-      setOrganizations(allOrganizations.map(org => ({ id: org.id, name: org.name })));
+      const universityId = typeof userData.university === 'string'
+        ? userData.university
+        : userData.university.id;
+      const allOrganizations = await DatabaseService.getOrganizations(universityId);
+      setOrganizations(allOrganizations.map(org => ({ id: org.id, name: org.name, description: org.description })));
     } catch (error) {
       console.error('Error loading organizations:', error);
     } finally {
       setLoadingOrganizations(false);
     }
   };
+
+  const coursesToRender = useMemo(() => {
+    const base = courses;
+    if (!debouncedCourseSearchQuery) return base;
+    const filtered = base.filter(
+      c =>
+        c.code.toLowerCase().includes(debouncedCourseSearchQuery) ||
+        c.name.toLowerCase().includes(debouncedCourseSearchQuery)
+    );
+    // Ensure the currently-selected course remains visible even if it doesn't match search.
+    if (selectedCourseId && !filtered.some(c => c.id === selectedCourseId)) {
+      const selected = base.find(c => c.id === selectedCourseId);
+      if (selected) return [...filtered, selected];
+    }
+    return filtered;
+  }, [courses, debouncedCourseSearchQuery, selectedCourseId]);
+
+  const organizationsToRender = useMemo(() => {
+    const base = organizations;
+    if (!debouncedOrganizationSearchQuery) return base;
+    const filtered = base.filter(
+      o =>
+        o.name.toLowerCase().includes(debouncedOrganizationSearchQuery) ||
+        (o.description || '').toLowerCase().includes(debouncedOrganizationSearchQuery)
+    );
+    // Ensure the currently-selected organization remains visible even if it doesn't match search.
+    if (selectedOrganizationId && !filtered.some(o => o.id === selectedOrganizationId)) {
+      const selected = base.find(o => o.id === selectedOrganizationId);
+      if (selected) return [...filtered, selected];
+    }
+    return filtered;
+  }, [organizations, debouncedOrganizationSearchQuery, selectedOrganizationId]);
 
   const toggleTag = (tag: string) => {
     if (selectedTags.includes(tag)) {
@@ -192,7 +233,7 @@ export default function CreateDiscussionScreen({ route, navigation }: any) {
       const normalizedCourseId = finalCourseId?.trim() || undefined;
       const normalizedOrganizationId = finalOrganizationId?.trim() || undefined;
       
-      const discussionId = await DatabaseService.createDiscussion({
+      await DatabaseService.createDiscussion({
         userId: user.uid,
         title: title.trim(),
         content: content.trim(),
@@ -307,6 +348,8 @@ export default function CreateDiscussionScreen({ route, navigation }: any) {
                 onPress={() => {
                   setAssociationType('course');
                   setSelectedOrganizationId('');
+                  setOrganizationSearchQuery('');
+                  setCourseSearchQuery('');
                   if (!courses.length && userData?.university) {
                     loadCourses();
                   }
@@ -331,6 +374,8 @@ export default function CreateDiscussionScreen({ route, navigation }: any) {
                 onPress={() => {
                   setAssociationType('organization');
                   setSelectedCourseId('');
+                  setCourseSearchQuery('');
+                  setOrganizationSearchQuery('');
                   if (!organizations.length) {
                     loadOrganizations();
                   }
@@ -350,13 +395,28 @@ export default function CreateDiscussionScreen({ route, navigation }: any) {
             {associationType === 'course' && (
               <View style={styles.selectionContainer}>
                 <Text style={[styles.selectionLabel, { color: theme.colors.text }]}>Select Course <Text style={styles.required}>*</Text></Text>
+                <TextInput
+                  style={[
+                    styles.pickerSearchInput,
+                    {
+                      backgroundColor: theme.colors.background,
+                      borderColor: theme.colors.border,
+                      color: theme.colors.text,
+                    },
+                  ]}
+                  placeholder="Search by code or name..."
+                  placeholderTextColor={theme.colors.textSecondary}
+                  value={courseSearchQuery}
+                  onChangeText={setCourseSearchQuery}
+                  autoCorrect={false}
+                />
                 {loadingCourses ? (
                   <Text style={[styles.helperText, { color: theme.colors.textSecondary }]}>Loading courses...</Text>
                 ) : courses.length === 0 ? (
                   <Text style={[styles.helperText, { color: theme.colors.textSecondary }]}>No courses available</Text>
                 ) : (
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.coursesScroll}>
-                    {courses.map((course) => (
+                    {coursesToRender.map((course) => (
                       <TouchableOpacity
                         key={course.id}
                         style={[
@@ -378,6 +438,11 @@ export default function CreateDiscussionScreen({ route, navigation }: any) {
                     ))}
                   </ScrollView>
                 )}
+                {courses.length > 0 && !loadingCourses && coursesToRender.length === 0 && (
+                  <Text style={[styles.helperText, { color: theme.colors.textSecondary, marginTop: 8 }]}>
+                    No courses match your search
+                  </Text>
+                )}
                 {courses.length > 0 && !selectedCourseId && (
                   <Text style={[styles.errorText, { color: theme.colors.error }]}>
                     Please select a course
@@ -390,13 +455,28 @@ export default function CreateDiscussionScreen({ route, navigation }: any) {
             {associationType === 'organization' && (
               <View style={styles.selectionContainer}>
                 <Text style={[styles.selectionLabel, { color: theme.colors.text }]}>Select Organization <Text style={styles.required}>*</Text></Text>
+                <TextInput
+                  style={[
+                    styles.pickerSearchInput,
+                    {
+                      backgroundColor: theme.colors.background,
+                      borderColor: theme.colors.border,
+                      color: theme.colors.text,
+                    },
+                  ]}
+                  placeholder="Search organizations..."
+                  placeholderTextColor={theme.colors.textSecondary}
+                  value={organizationSearchQuery}
+                  onChangeText={setOrganizationSearchQuery}
+                  autoCorrect={false}
+                />
                 {loadingOrganizations ? (
                   <Text style={[styles.helperText, { color: theme.colors.textSecondary }]}>Loading organizations...</Text>
                 ) : organizations.length === 0 ? (
                   <Text style={[styles.helperText, { color: theme.colors.textSecondary }]}>No organizations available</Text>
                 ) : (
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.coursesScroll}>
-                    {organizations.map((org) => (
+                    {organizationsToRender.map((org) => (
                       <TouchableOpacity
                         key={org.id}
                         style={[
@@ -417,6 +497,11 @@ export default function CreateDiscussionScreen({ route, navigation }: any) {
                       </TouchableOpacity>
                     ))}
                   </ScrollView>
+                )}
+                {organizations.length > 0 && !loadingOrganizations && organizationsToRender.length === 0 && (
+                  <Text style={[styles.helperText, { color: theme.colors.textSecondary, marginTop: 8 }]}>
+                    No organizations match your search
+                  </Text>
                 )}
                 {organizations.length > 0 && !selectedOrganizationId && (
                   <Text style={[styles.errorText, { color: theme.colors.error }]}>
@@ -620,6 +705,14 @@ const createStyles = (theme: any) =>
     },
     coursesScroll: {
       marginTop: 8,
+    },
+    pickerSearchInput: {
+      height: 44,
+      borderWidth: 1,
+      borderRadius: 10,
+      paddingHorizontal: 12,
+      marginBottom: 12,
+      fontSize: 14,
     },
     courseButton: {
       paddingHorizontal: 16,

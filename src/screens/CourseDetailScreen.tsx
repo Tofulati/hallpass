@@ -195,31 +195,10 @@ export default function CourseDetailScreen({ route, navigation }: any) {
         }
         return matches;
       });
-      
-      // Campus-wide general threads (no course / org attachment)
-      const allDiscussionsRaw = await DatabaseService.getDiscussions(
-        { universityId },
-        'popularity',
-        200
-      );
-      
-      // Filter general discussions (no courseId, no organizationId)
-      // Handle both undefined, null, and empty string cases
-      const generalDiscussions = allDiscussionsRaw.filter(d => {
-        const hasCourseId = d.courseId && typeof d.courseId === 'string' && d.courseId.trim() !== '';
-        const hasOrganizationId = d.organizationId && typeof d.organizationId === 'string' && d.organizationId.trim() !== '';
-        return !hasCourseId && !hasOrganizationId && !d.isPrivate; // General discussions are never private
-      });
-      
-      // Combine course and general discussions, removing duplicates
-      const allDiscussionsMap = new Map<string, Discussion>();
-      [...visibleCourseDiscussions, ...generalDiscussions].forEach(d => {
-        allDiscussionsMap.set(d.id, d);
-      });
-      const allDiscussions = Array.from(allDiscussionsMap.values());
-      
-      // Apply ML ranking
-      const rankedDiscussions = allDiscussions.map(discussion => {
+
+      // Only show discussions explicitly associated with this course.
+      // (Do not merge in campus-wide "general" discussions here.)
+      const rankedDiscussions = visibleCourseDiscussions.map(discussion => {
         const rankingInput = {
           upvotes: discussion.upvotes.length,
           downvotes: discussion.downvotes.length,

@@ -14,12 +14,12 @@ import { Image as ExpoImage } from 'expo-image';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { DatabaseService } from '../services/databaseService';
-import { User, University, Course, Organization } from '../types';
+import { University, Course, Organization } from '../types';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 
 export default function UserScreen({ navigation }: any) {
-  const { user, userData, refreshUserData } = useAuth();
+  const { user, userData } = useAuth();
   const { theme } = useTheme();
   const [university, setUniversity] = useState<University | null>(null);
   const [courses, setCourses] = useState<Course[]>([]);
@@ -84,10 +84,17 @@ export default function UserScreen({ navigation }: any) {
       return;
     }
 
+    if (!userData?.university) {
+      setOrganizations([]);
+      return;
+    }
+
     setLoadingOrgs(true);
     try {
-      // Get all organizations
-      const allOrganizations = await DatabaseService.getOrganizations();
+      // Only load organizations for the user's university to avoid cross-school leakage.
+      const universityId =
+        typeof userData.university === 'string' ? userData.university : userData.university.id;
+      const allOrganizations = await DatabaseService.getOrganizations(universityId);
       // In Firestore, clubs is stored as string[] (IDs), not Club[]
       const clubIds = userData.clubs.map((c: any) => typeof c === 'string' ? c : c.id);
       // Filter to only organizations the user is a member of
